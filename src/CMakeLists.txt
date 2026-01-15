@@ -1,5 +1,9 @@
 add_library(opencode_pathtracer STATIC)
 
+opencode_enable_warnings(opencode_pathtracer)
+
+target_link_libraries(opencode_pathtracer PUBLIC Kokkos::kokkos anari)
+
 target_include_directories(opencode_pathtracer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_compile_features(opencode_pathtracer PUBLIC cxx_std_23)

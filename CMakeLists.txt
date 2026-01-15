@@ -8,6 +8,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(CTest)
 
+set(BUILD_TESTING ON) # this project
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+include(ProjectOptions)
+include(Dependencies)
+
 add_subdirectory(src)
 
 if(BUILD_TESTING)
