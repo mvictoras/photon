@@ -1,45 +1,49 @@
-add_library(anari_library_opencode_pathtracer SHARED)
-set_target_properties(anari_library_opencode_pathtracer PROPERTIES OUTPUT_NAME "anari_library_opencode_pathtracer")
+add_library(anari_library_photon SHARED)
+set_target_properties(anari_library_photon PROPERTIES OUTPUT_NAME "anari_library_photon")
 
-opencode_enable_warnings(anari_library_opencode_pathtracer)
+opencode_enable_warnings(anari_library_photon)
 
-target_link_libraries(anari_library_opencode_pathtracer PUBLIC Kokkos::kokkos anari)
+target_link_libraries(anari_library_photon PUBLIC Kokkos::kokkos anari)
 
-target_include_directories(anari_library_opencode_pathtracer PUBLIC
+target_include_directories(anari_library_photon PUBLIC
   "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include"
   "${CMAKE_BINARY_DIR}/_deps/anari-src/src"
 )
 
-target_include_directories(anari_library_opencode_pathtracer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(anari_library_photon PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${PROJECT_SOURCE_DIR}/include
+)
 
-target_compile_features(anari_library_opencode_pathtracer PUBLIC cxx_std_23)
+target_compile_features(anari_library_photon PUBLIC cxx_std_23)
 
-target_sources(anari_library_opencode_pathtracer
+target_sources(anari_library_photon
   PRIVATE
-    opencode/pathtracer/version.cpp
-    opencode/anari/device.cpp
-    opencode/anari/library.cpp
-    opencode/anari/entrypoint.cpp
-    opencode/pt/pathtracer.cpp
-    opencode/pt/bvh/bvh.cpp
-    opencode/pt/scene.cpp
-    opencode/pt/scene/builder.cpp
+    photon/pathtracer/version.cpp
+    photon/anari/device.cpp
+    photon/anari/library.cpp
+    photon/anari/entrypoint.cpp
+    photon/pt/pathtracer.cpp
+    photon/pt/bvh/bvh.cpp
+    photon/pt/scene.cpp
+    photon/pt/scene/builder.cpp
   PUBLIC
-    opencode/pathtracer/version.h
-    opencode/anari/device.h
-    opencode/anari/library.h
-    opencode/pt/bvh/bvh.h
-    opencode/pt/camera.h
-    opencode/pt/geom/mesh_intersector.h
-    opencode/pt/geom/triangle_intersect.h
-    opencode/pt/geom/triangle_mesh.h
-    opencode/pt/material.h
-    opencode/pt/math.h
-    opencode/pt/math_aabb.h
-    opencode/pt/pathtracer.h
-    opencode/pt/ray.h
-    opencode/pt/rng.h
-    opencode/pt/scene.h
-    opencode/pt/scene/builder.h
-    opencode/pt/sphere.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pathtracer/version.h
+    ${PROJECT_SOURCE_DIR}/include/photon/anari/device.h
+    ${PROJECT_SOURCE_DIR}/include/photon/anari/library.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/bvh/bvh.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/bvh/bvh_validate.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/camera.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/geom/mesh_intersector.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/geom/triangle_intersect.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/geom/triangle_mesh.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/material.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/math.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/math_aabb.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/pathtracer.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/ray.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/rng.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/scene.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/scene/builder.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/sphere.h
 )

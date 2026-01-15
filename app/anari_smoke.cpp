@@ -10,7 +10,7 @@ static void statusCallback(const void *, ANARIDevice, ANARIObject, ANARIDataType
 
 int main()
 {
-  auto lib = anariLoadLibrary("opencode_pathtracer", statusCallback, nullptr);
+  auto lib = anariLoadLibrary("photon", statusCallback, nullptr);
   if (!lib) {
     std::fprintf(stderr, "failed to load library\n");
     return 1;

@@ -1,19 +1,19 @@
-add_executable(opencode_pathtracer_app main.cpp)
+add_executable(photon_app main.cpp)
 
-target_link_libraries(opencode_pathtracer_app PRIVATE anari_library_opencode_pathtracer)
+target_link_libraries(photon_app PRIVATE anari_library_photon)
 
-target_include_directories(opencode_pathtracer_app PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
+target_include_directories(photon_app PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
 
-add_executable(opencode_anari_smoke anari_smoke.cpp)
+add_executable(photon_anari_smoke anari_smoke.cpp)
 
-target_link_libraries(opencode_anari_smoke PRIVATE anari_library_opencode_pathtracer anari)
+target_link_libraries(photon_anari_smoke PRIVATE anari_library_photon anari)
 
-target_include_directories(opencode_anari_smoke PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
+target_include_directories(photon_anari_smoke PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
 
-add_executable(opencode_pt_render pt_render.cpp)
+add_executable(photon_render photon_render.cpp)
 
-target_link_libraries(opencode_pt_render PRIVATE anari_library_opencode_pathtracer)
+target_link_libraries(photon_render PRIVATE anari_library_photon)
 
-add_executable(opencode_pt_debug_ray pt_debug_ray.cpp)
+add_executable(photon_debug_ray photon_debug_ray.cpp)
 
-target_link_libraries(opencode_pt_debug_ray PRIVATE anari_library_opencode_pathtracer)
+target_link_libraries(photon_debug_ray PRIVATE anari_library_photon)

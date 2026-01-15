@@ -1,15 +1,15 @@
 # Changelog
 
 ## Unreleased
-- Add `SceneBuilder` and update `opencode_pt_render` to render a 2-quad scene (vertical + ground).
-- Add per-triangle albedo (mesh stores `albedo_per_prim`) and render it in `opencode_pt_render`.
+- Add `SceneBuilder` and update `photon_render` to render a 2-quad scene (vertical + ground).
+- Add per-triangle albedo (mesh stores `albedo_per_prim`) and render it in `photon_render`.
 - Adjust default camera to frame the mesh quad.
 - Fix BVH/AABB traversal for coplanar AABBs (tmax==tmin) so mesh intersections work.
 - Fix mesh visibility: use front-facing normals and a camera-facing quad scene.
-- Render a triangle mesh via BVH traversal (quad scene) in `opencode_pt_render` (removed sphere fallback).
+- Render a triangle mesh via BVH traversal (quad scene) in `photon_render` (removed sphere fallback).
 - Add triangle mesh + CPU-built BVH scaffolding (not yet used by renderer).
-- Add standalone Kokkos path tracer app (`opencode_pt_render`) which writes `out.ppm`.
-- Build ANARI loadable library (`anari_library_opencode_pathtracer`) with correct exported entrypoint and runnable smoke app.
+- Add standalone Kokkos path tracer app (`photon_render`) which writes `out.ppm`.
+- Build ANARI loadable library (`anari_library_photon`) with correct exported entrypoint and runnable smoke app.
 - Add initial ANARI device scaffolding (device factory stub) and wire anari headers into build.
 - Update Kokkos to 5.0.1 and patch/disable anari-sdk build+tests to integrate as dependency.
 - Add CMake dependency fetching (Kokkos + ANARI-SDK) and basic project options.

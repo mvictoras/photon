@@ -1,9 +1,9 @@
-add_executable(opencode_version_test version_test.cpp)
-add_executable(opencode_pt_smoke_test pt_smoke_test.cpp)
+add_executable(photon_version_test version_test.cpp)
+add_executable(photon_pt_smoke_test pt_smoke_test.cpp)
 
-target_link_libraries(opencode_version_test PRIVATE anari_library_opencode_pathtracer)
+target_link_libraries(photon_version_test PRIVATE anari_library_photon)
 
-target_link_libraries(opencode_pt_smoke_test PRIVATE anari_library_opencode_pathtracer)
+target_link_libraries(photon_pt_smoke_test PRIVATE anari_library_photon)
 
-add_test(NAME opencode_version_test COMMAND opencode_version_test)
-add_test(NAME opencode_pt_smoke_test COMMAND opencode_pt_smoke_test)
+add_test(NAME photon_version_test COMMAND photon_version_test)
+add_test(NAME photon_pt_smoke_test COMMAND photon_pt_smoke_test)
