@@ -1,3 +1,11 @@
 add_executable(opencode_pathtracer_app main.cpp)
 
-target_link_libraries(opencode_pathtracer_app PRIVATE opencode_pathtracer)
+target_link_libraries(opencode_pathtracer_app PRIVATE anari_library_opencode_pathtracer)
+
+target_include_directories(opencode_pathtracer_app PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
+
+add_executable(opencode_anari_smoke anari_smoke.cpp)
+
+target_link_libraries(opencode_anari_smoke PRIVATE anari_library_opencode_pathtracer anari)
+
+target_include_directories(opencode_anari_smoke PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
