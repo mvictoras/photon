@@ -13,6 +13,11 @@ ANARI device: production path tracer built with **C++23** and **Kokkos** (CUDA/H
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ctest --test-dir build -R '^opencode_'
+
+## Run (smoke)
+```bash
+DYLD_LIBRARY_PATH=build/src:build/_deps/anari-build ./build/app/opencode_anari_smoke
+```
 ```
 
 ## Status

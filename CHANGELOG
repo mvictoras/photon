@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Build ANARI loadable library (`anari_library_opencode_pathtracer`) with correct exported entrypoint and runnable smoke app.
 - Add initial ANARI device scaffolding (device factory stub) and wire anari headers into build.
 - Update Kokkos to 5.0.1 and patch/disable anari-sdk build+tests to integrate as dependency.
 - Add CMake dependency fetching (Kokkos + ANARI-SDK) and basic project options.
