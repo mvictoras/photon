@@ -1,4 +1,4 @@
-#include "opencode/pt/pathtracer.h"
+#include "photon/pt/pathtracer.h"
 
 #include <Kokkos_Core.hpp>
 
@@ -8,7 +8,7 @@ int main(int argc, char **argv)
 {
   Kokkos::initialize(argc, argv);
   {
-    opencode::pt::PathTracer pt;
+    photon::pt::PathTracer pt;
     pt.params.width = 16;
     pt.params.height = 16;
     pt.params.samples_per_pixel = 1;
