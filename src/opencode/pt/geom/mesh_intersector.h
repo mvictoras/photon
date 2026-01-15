@@ -50,7 +50,10 @@ KOKKOS_FUNCTION inline MeshHit intersect_mesh_bvh(const TriangleMesh &mesh, cons
 
         best.t = h.t;
         best.p = ray.at(h.t);
-        best.n = normalize(cross(v1 - v0, v2 - v0));
+        Vec3 nn = normalize(cross(v1 - v0, v2 - v0));
+        if (dot(nn, ray.dir) > 0.f)
+          nn = nn * -1.f;
+        best.n = nn;
         best.prim_id = prim;
         best.hit = true;
       }

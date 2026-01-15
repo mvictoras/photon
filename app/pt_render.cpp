@@ -20,10 +20,10 @@ opencode::pt::Scene make_quad_scene()
   auto pos_h = Kokkos::create_mirror_view(mesh.positions);
   auto idx_h = Kokkos::create_mirror_view(mesh.indices);
 
-  pos_h(0) = {-1.f, 0.f, -1.5f};
-  pos_h(1) = {+1.f, 0.f, -1.5f};
-  pos_h(2) = {+1.f, 0.f, -3.5f};
-  pos_h(3) = {-1.f, 0.f, -3.5f};
+  pos_h(0) = {-1.f, -1.f, -2.5f};
+  pos_h(1) = {+1.f, -1.f, -2.5f};
+  pos_h(2) = {+1.f, +1.f, -2.5f};
+  pos_h(3) = {-1.f, +1.f, -2.5f};
 
   idx_h(0) = 0;
   idx_h(1) = 1;
