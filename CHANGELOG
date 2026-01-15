@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Add triangle mesh + CPU-built BVH scaffolding (not yet used by renderer).
 - Add standalone Kokkos path tracer app (`opencode_pt_render`) which writes `out.ppm`.
 - Build ANARI loadable library (`anari_library_opencode_pathtracer`) with correct exported entrypoint and runnable smoke app.
 - Add initial ANARI device scaffolding (device factory stub) and wire anari headers into build.
