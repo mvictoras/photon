@@ -23,6 +23,7 @@ target_sources(anari_library_opencode_pathtracer
     opencode/pt/pathtracer.cpp
     opencode/pt/bvh/bvh.cpp
     opencode/pt/scene.cpp
+    opencode/pt/scene/builder.cpp
   PUBLIC
     opencode/pathtracer/version.h
     opencode/anari/device.h
@@ -39,5 +40,6 @@ target_sources(anari_library_opencode_pathtracer
     opencode/pt/ray.h
     opencode/pt/rng.h
     opencode/pt/scene.h
+    opencode/pt/scene/builder.h
     opencode/pt/sphere.h
 )
