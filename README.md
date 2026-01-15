@@ -20,7 +20,7 @@ ctest --test-dir build -R '^opencode_'
 open out.ppm
 ```
 
-Current scene: a simple triangle-mesh quad rendered via BVH.
+Current scene: two quads (one vertical, one ground) rendered via BVH.
 
 ## Run (ANARI load smoke)
 ```bash
