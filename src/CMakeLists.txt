@@ -20,8 +20,15 @@ target_sources(anari_library_opencode_pathtracer
     opencode/anari/device.cpp
     opencode/anari/library.cpp
     opencode/anari/entrypoint.cpp
+    opencode/pt/pathtracer.cpp
   PUBLIC
     opencode/pathtracer/version.h
     opencode/anari/device.h
     opencode/anari/library.h
+    opencode/pt/camera.h
+    opencode/pt/math.h
+    opencode/pt/pathtracer.h
+    opencode/pt/ray.h
+    opencode/pt/rng.h
+    opencode/pt/sphere.h
 )

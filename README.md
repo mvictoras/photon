@@ -14,7 +14,13 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ctest --test-dir build -R '^opencode_'
 
-## Run (smoke)
+## Run (standalone render)
+```bash
+./build/app/opencode_pt_render
+open out.ppm
+```
+
+## Run (ANARI load smoke)
 ```bash
 DYLD_LIBRARY_PATH=build/src:build/_deps/anari-build ./build/app/opencode_anari_smoke
 ```

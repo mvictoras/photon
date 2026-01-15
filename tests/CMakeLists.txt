@@ -1,5 +1,9 @@
-add_executable(opencode_pathtracer_tests version_test.cpp)
+add_executable(opencode_version_test version_test.cpp)
+add_executable(opencode_pt_smoke_test pt_smoke_test.cpp)
 
-target_link_libraries(opencode_pathtracer_tests PRIVATE anari_library_opencode_pathtracer)
+target_link_libraries(opencode_version_test PRIVATE anari_library_opencode_pathtracer)
 
-add_test(NAME opencode_pathtracer_tests COMMAND opencode_pathtracer_tests)
+target_link_libraries(opencode_pt_smoke_test PRIVATE anari_library_opencode_pathtracer)
+
+add_test(NAME opencode_version_test COMMAND opencode_version_test)
+add_test(NAME opencode_pt_smoke_test COMMAND opencode_pt_smoke_test)
