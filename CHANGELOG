@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Add per-triangle albedo (mesh stores `albedo_per_prim`) and render it in `opencode_pt_render`.
 - Adjust default camera to frame the mesh quad.
 - Fix BVH/AABB traversal for coplanar AABBs (tmax==tmin) so mesh intersections work.
 - Fix mesh visibility: use front-facing normals and a camera-facing quad scene.

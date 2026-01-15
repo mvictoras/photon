@@ -22,7 +22,7 @@ KOKKOS_FUNCTION Vec3 PathTracer::shade(Rng &rng, Ray ray) const
         t_hit = mh.t;
         p = mh.p;
         n = mh.n;
-        albedo = {0.7f, 0.7f, 0.7f};
+        albedo = mesh.albedo_per_prim.extent(0) ? mesh.albedo_per_prim(mh.prim_id) : Vec3{0.7f, 0.7f, 0.7f};
         hit_any = true;
       }
     }
