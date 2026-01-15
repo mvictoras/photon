@@ -21,14 +21,21 @@ target_sources(anari_library_opencode_pathtracer
     opencode/anari/library.cpp
     opencode/anari/entrypoint.cpp
     opencode/pt/pathtracer.cpp
+    opencode/pt/bvh/bvh.cpp
+    opencode/pt/scene.cpp
   PUBLIC
     opencode/pathtracer/version.h
     opencode/anari/device.h
     opencode/anari/library.h
+    opencode/pt/bvh/bvh.h
     opencode/pt/camera.h
+    opencode/pt/geom/triangle_intersect.h
+    opencode/pt/geom/triangle_mesh.h
     opencode/pt/math.h
+    opencode/pt/math_aabb.h
     opencode/pt/pathtracer.h
     opencode/pt/ray.h
     opencode/pt/rng.h
+    opencode/pt/scene.h
     opencode/pt/sphere.h
 )

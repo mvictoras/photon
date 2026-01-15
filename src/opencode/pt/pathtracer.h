@@ -5,7 +5,10 @@
 #include "opencode/pt/camera.h"
 #include "opencode/pt/math.h"
 #include "opencode/pt/rng.h"
+#include "opencode/pt/scene.h"
 #include "opencode/pt/sphere.h"
+
+#include <optional>
 
 namespace opencode::pt {
 
@@ -20,6 +23,7 @@ struct RenderParams
 struct PathTracer
 {
   RenderParams params;
+  std::optional<Scene> scene;
 
   using PixelView = Kokkos::View<Vec3 **, Kokkos::LayoutRight>;
 
