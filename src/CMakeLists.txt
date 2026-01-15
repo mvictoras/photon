@@ -32,6 +32,7 @@ target_sources(anari_library_opencode_pathtracer
     opencode/pt/geom/mesh_intersector.h
     opencode/pt/geom/triangle_intersect.h
     opencode/pt/geom/triangle_mesh.h
+    opencode/pt/material.h
     opencode/pt/math.h
     opencode/pt/math_aabb.h
     opencode/pt/pathtracer.h

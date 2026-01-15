@@ -16,9 +16,11 @@ opencode::pt::Scene make_quad_scene()
   TriangleMesh mesh;
   mesh.positions = Kokkos::View<Vec3 *>("pos", 4);
   mesh.indices = Kokkos::View<u32 *>("idx", 6);
+  mesh.albedo_per_prim = Kokkos::View<Vec3 *>("alb", 2);
 
   auto pos_h = Kokkos::create_mirror_view(mesh.positions);
   auto idx_h = Kokkos::create_mirror_view(mesh.indices);
+  auto alb_h = Kokkos::create_mirror_view(mesh.albedo_per_prim);
 
   pos_h(0) = {-1.f, -1.f, -2.5f};
   pos_h(1) = {+1.f, -1.f, -2.5f};
@@ -32,8 +34,12 @@ opencode::pt::Scene make_quad_scene()
   idx_h(4) = 2;
   idx_h(5) = 3;
 
+  alb_h(0) = {0.9f, 0.2f, 0.2f};
+  alb_h(1) = {0.2f, 0.9f, 0.2f};
+
   Kokkos::deep_copy(mesh.positions, pos_h);
   Kokkos::deep_copy(mesh.indices, idx_h);
+  Kokkos::deep_copy(mesh.albedo_per_prim, alb_h);
 
   Scene s;
   s.mesh = mesh;

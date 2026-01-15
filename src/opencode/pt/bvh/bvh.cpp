@@ -109,7 +109,7 @@ Bvh Bvh::build_cpu(const TriangleMesh &mesh)
   auto pos_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.positions);
   auto idx_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.indices);
 
-  TriangleMesh host_mesh{pos_h, idx_h};
+  TriangleMesh host_mesh{pos_h, idx_h, {}};
 
   std::vector<PrimRef> prims(ntris);
   for (u32 i = 0; i < ntris; ++i) {
