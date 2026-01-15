@@ -36,10 +36,10 @@ KOKKOS_FUNCTION inline MeshHit intersect_mesh_bvh(const TriangleMesh &mesh, cons
 
     if (node.is_leaf) {
       for (u32 i = 0; i < node.count; ++i) {
-        const u32 prim = bvh.prim_ids(node.begin + i);
-        const u32 i0 = mesh.indices(prim * 3 + 0);
-        const u32 i1 = mesh.indices(prim * 3 + 1);
-        const u32 i2 = mesh.indices(prim * 3 + 2);
+        const u32 prim_id = bvh.prim_ids(node.begin + i);
+        const u32 i0 = mesh.indices(prim_id * 3 + 0);
+        const u32 i1 = mesh.indices(prim_id * 3 + 1);
+        const u32 i2 = mesh.indices(prim_id * 3 + 2);
         const Vec3 v0 = mesh.positions(i0);
         const Vec3 v1 = mesh.positions(i1);
         const Vec3 v2 = mesh.positions(i2);
@@ -54,7 +54,7 @@ KOKKOS_FUNCTION inline MeshHit intersect_mesh_bvh(const TriangleMesh &mesh, cons
         if (dot(nn, ray.dir) > 0.f)
           nn = nn * -1.f;
         best.n = nn;
-        best.prim_id = prim;
+        best.prim_id = prim_id;
         best.hit = true;
       }
     } else {

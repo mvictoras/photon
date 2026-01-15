@@ -45,7 +45,7 @@ Vec3 tri_centroid(const TriangleMesh &mesh, u32 tri)
   return (v0 + v1 + v2) * (1.f / 3.f);
 }
 
-u32 build_node(std::vector<BvhNode> &nodes, std::vector<u32> &prim_ids, std::vector<PrimRef> &prims, u32 begin,
+u32 build_node(std::vector<BvhNode> &nodes, std::vector<PrimRef> &prims, std::vector<u32> &prim_ids, u32 begin,
     u32 end)
 {
   const u32 node_id = u32(nodes.size());
@@ -60,14 +60,23 @@ u32 build_node(std::vector<BvhNode> &nodes, std::vector<u32> &prim_ids, std::vec
 
   BvhNode &n = nodes[node_id];
   n.bounds = b;
-  n.begin = begin;
+  const u32 prim_begin = u32(prim_ids.size());
+  for (u32 i = begin; i < end; ++i)
+    prim_ids.push_back(prims[i].id);
+
+  n.begin = prim_begin;
   n.count = end - begin;
 
   constexpr u32 leaf_size = 4;
   if (n.count <= leaf_size) {
     n.is_leaf = 1;
+    n.left = 0;
+    n.right = 0;
     return node_id;
   }
+
+  prim_ids.resize(prim_begin);
+  n.begin = begin;
 
   const Vec3 diag = cbox.hi - cbox.lo;
   int axis = 0;
@@ -84,8 +93,9 @@ u32 build_node(std::vector<BvhNode> &nodes, std::vector<u32> &prim_ids, std::vec
   std::nth_element(prims.begin() + begin, prims.begin() + mid, prims.begin() + end,
       [&](const PrimRef &a, const PrimRef &b) { return key(a) < key(b); });
 
-  n.left = build_node(nodes, prim_ids, prims, begin, mid);
-  n.right = build_node(nodes, prim_ids, prims, mid, end);
+
+  n.left = build_node(nodes, prims, prim_ids, begin, mid);
+  n.right = build_node(nodes, prims, prim_ids, mid, end);
   n.is_leaf = 0;
   return node_id;
 }
@@ -108,30 +118,27 @@ Bvh Bvh::build_cpu(const TriangleMesh &mesh)
     prims[i].centroid = tri_centroid(host_mesh, i);
   }
 
-  std::vector<u32> prim_ids(ntris);
-  std::iota(prim_ids.begin(), prim_ids.end(), 0u);
+
+  std::vector<u32> prim_ids;
+  prim_ids.reserve(ntris);
 
   std::vector<BvhNode> nodes;
   nodes.reserve(ntris * 2);
 
-  const u32 root = build_node(nodes, prim_ids, prims, 0, ntris);
-
-  std::vector<u32> final_ids(ntris);
-  for (u32 i = 0; i < ntris; ++i)
-    final_ids[i] = prims[i].id;
+  const u32 root = build_node(nodes, prims, prim_ids, 0, ntris);
 
   Bvh out;
   out.root = root;
   out.nodes = Kokkos::View<BvhNode *>("bvh_nodes", nodes.size());
-  out.prim_ids = Kokkos::View<u32 *>("bvh_prim_ids", final_ids.size());
+  out.prim_ids = Kokkos::View<u32 *>("bvh_prim_ids", prim_ids.size());
 
   auto nodes_h = Kokkos::create_mirror_view(out.nodes);
   auto ids_h = Kokkos::create_mirror_view(out.prim_ids);
 
   for (size_t i = 0; i < nodes.size(); ++i)
     nodes_h(i) = nodes[i];
-  for (size_t i = 0; i < final_ids.size(); ++i)
-    ids_h(i) = final_ids[i];
+  for (size_t i = 0; i < prim_ids.size(); ++i)
+    ids_h(i) = prim_ids[i];
 
   Kokkos::deep_copy(out.nodes, nodes_h);
   Kokkos::deep_copy(out.prim_ids, ids_h);
