@@ -1,0 +1,5 @@
+add_executable(opencode_pathtracer_tests version_test.cpp)
+
+target_link_libraries(opencode_pathtracer_tests PRIVATE opencode_pathtracer)
+
+add_test(NAME opencode_pathtracer_tests COMMAND opencode_pathtracer_tests)

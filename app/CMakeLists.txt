@@ -1,0 +1,3 @@
+add_executable(opencode_pathtracer_app main.cpp)
+
+target_link_libraries(opencode_pathtracer_app PRIVATE opencode_pathtracer)
