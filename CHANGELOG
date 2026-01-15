@@ -1,7 +1,7 @@
 # Changelog
 
 ## Unreleased
-- Render a triangle mesh via BVH traversal (quad scene) in `opencode_pt_render`.
+- Render a triangle mesh via BVH traversal (quad scene) in `opencode_pt_render` (removed sphere fallback).
 - Add triangle mesh + CPU-built BVH scaffolding (not yet used by renderer).
 - Add standalone Kokkos path tracer app (`opencode_pt_render`) which writes `out.ppm`.
 - Build ANARI loadable library (`anari_library_opencode_pathtracer`) with correct exported entrypoint and runnable smoke app.

@@ -25,25 +25,6 @@ KOKKOS_FUNCTION Vec3 PathTracer::shade(Rng &rng, Ray ray) const
         albedo = {0.7f, 0.7f, 0.7f};
         hit_any = true;
       }
-    } else {
-      Sphere spheres[2];
-      spheres[0] = Sphere{{0.f, 0.f, -1.f}, 0.5f, {0.7f, 0.3f, 0.3f}};
-      spheres[1] = Sphere{{0.f, -100.5f, -1.f}, 100.f, {0.8f, 0.8f, 0.0f}};
-
-      Hit best;
-      best.t = t_hit;
-      for (const auto &s : spheres) {
-        const Hit h = s.intersect(ray, 1e-3f, best.t);
-        if (h.hit)
-          best = h;
-      }
-
-      if (best.hit) {
-        p = best.p;
-        n = best.n;
-        albedo = Kokkos::fabs(best.n.y) > 0.9f ? spheres[1].albedo : spheres[0].albedo;
-        hit_any = true;
-      }
     }
 
     if (!hit_any) {
