@@ -50,7 +50,7 @@ PathTracer::PixelView PathTracer::render() const
   PixelView pixels("pixels", h, w);
 
   const f32 aspect = f32(w) / f32(h);
-  const Camera cam = Camera::make_pinhole({3.f, 3.f, 2.f}, {0.f, 0.f, -1.f}, {0.f, 1.f, 0.f}, 20.f, aspect);
+  const Camera cam = Camera::make_pinhole({0.f, 0.f, 2.f}, {0.f, 0.f, -2.5f}, {0.f, 1.f, 0.f}, 35.f, aspect);
 
   const u32 spp = params.samples_per_pixel;
 
