@@ -13,3 +13,7 @@ target_include_directories(opencode_anari_smoke PRIVATE "${CMAKE_BINARY_DIR}/_de
 add_executable(opencode_pt_render pt_render.cpp)
 
 target_link_libraries(opencode_pt_render PRIVATE anari_library_opencode_pathtracer)
+
+add_executable(opencode_pt_debug_ray pt_debug_ray.cpp)
+
+target_link_libraries(opencode_pt_debug_ray PRIVATE anari_library_opencode_pathtracer)
