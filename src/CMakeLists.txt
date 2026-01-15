@@ -29,6 +29,7 @@ target_sources(anari_library_opencode_pathtracer
     opencode/anari/library.h
     opencode/pt/bvh/bvh.h
     opencode/pt/camera.h
+    opencode/pt/geom/mesh_intersector.h
     opencode/pt/geom/triangle_intersect.h
     opencode/pt/geom/triangle_mesh.h
     opencode/pt/math.h

@@ -20,6 +20,8 @@ ctest --test-dir build -R '^opencode_'
 open out.ppm
 ```
 
+Current scene: a simple triangle-mesh quad rendered via BVH.
+
 ## Run (ANARI load smoke)
 ```bash
 DYLD_LIBRARY_PATH=build/src:build/_deps/anari-build ./build/app/opencode_anari_smoke
