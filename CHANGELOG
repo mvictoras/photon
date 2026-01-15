@@ -1,4 +1,4 @@
 # Changelog
 
 ## Unreleased
-- Initialize repository and ignore local environment files.
+- Add initial CMake project skeleton, library, mini app, and basic unit test.
