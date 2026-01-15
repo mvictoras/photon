@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.python-version
+.DS_Store
+build/
+.vscode/
+.idea/
+compile_commands.json
