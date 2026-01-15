@@ -5,6 +5,7 @@
 #include "opencode/pt/camera.h"
 #include "opencode/pt/math.h"
 #include "opencode/pt/rng.h"
+#include "opencode/pt/geom/mesh_intersector.h"
 #include "opencode/pt/scene.h"
 #include "opencode/pt/sphere.h"
 

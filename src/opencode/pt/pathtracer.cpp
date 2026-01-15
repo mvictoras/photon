@@ -4,37 +4,57 @@ namespace opencode::pt {
 
 KOKKOS_FUNCTION Vec3 PathTracer::shade(Rng &rng, Ray ray) const
 {
-  Sphere spheres[2];
-  spheres[0] = Sphere{{0.f, 0.f, -1.f}, 0.5f, {0.7f, 0.3f, 0.3f}};
-  spheres[1] = Sphere{{0.f, -100.5f, -1.f}, 100.f, {0.8f, 0.8f, 0.0f}};
-
   Vec3 throughput{1.f, 1.f, 1.f};
   Vec3 radiance{0.f, 0.f, 0.f};
 
   for (u32 depth = 0; depth < params.max_depth; ++depth) {
-    Hit best;
-    best.t = 1e30f;
+    Vec3 p;
+    Vec3 n;
+    Vec3 albedo;
+    f32 t_hit = 1e30f;
+    bool hit_any = false;
 
-    for (const auto &s : spheres) {
-      const Hit h = s.intersect(ray, 1e-3f, best.t);
-      if (h.hit)
-        best = h;
+    if (scene) {
+      const auto &mesh = scene->mesh;
+      const auto &bvh = scene->bvh;
+      const MeshHit mh = intersect_mesh_bvh(mesh, bvh, ray, 1e-3f, t_hit);
+      if (mh.hit) {
+        t_hit = mh.t;
+        p = mh.p;
+        n = mh.n;
+        albedo = {0.7f, 0.7f, 0.7f};
+        hit_any = true;
+      }
+    } else {
+      Sphere spheres[2];
+      spheres[0] = Sphere{{0.f, 0.f, -1.f}, 0.5f, {0.7f, 0.3f, 0.3f}};
+      spheres[1] = Sphere{{0.f, -100.5f, -1.f}, 100.f, {0.8f, 0.8f, 0.0f}};
+
+      Hit best;
+      best.t = t_hit;
+      for (const auto &s : spheres) {
+        const Hit h = s.intersect(ray, 1e-3f, best.t);
+        if (h.hit)
+          best = h;
+      }
+
+      if (best.hit) {
+        p = best.p;
+        n = best.n;
+        albedo = Kokkos::fabs(best.n.y) > 0.9f ? spheres[1].albedo : spheres[0].albedo;
+        hit_any = true;
+      }
     }
 
-    if (!best.hit) {
+    if (!hit_any) {
       const f32 t = 0.5f * (ray.dir.y + 1.f);
       const Vec3 sky = (1.f - t) * Vec3{1.f, 1.f, 1.f} + t * Vec3{0.5f, 0.7f, 1.f};
       radiance += throughput * sky;
       break;
     }
 
-    const Vec3 target = best.p + best.n + random_unit_vector(rng);
-    ray = Ray{best.p, normalize(target - best.p)};
-
-    Vec3 albedo = spheres[0].albedo;
-    if (Kokkos::fabs(best.n.y) > 0.9f)
-      albedo = spheres[1].albedo;
-
+    const Vec3 target = p + n + random_unit_vector(rng);
+    ray = Ray{p, normalize(target - p)};
     throughput = throughput * albedo;
   }
 
