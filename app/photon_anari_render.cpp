@@ -1,0 +1,76 @@
+#include <anari/anari.h>
+
+#include <Kokkos_Core.hpp>
+
+#include <cstdio>
+#include <fstream>
+#include <cstdint>
+
+#include "photon/pt/math.h"
+
+static void statusCallback(const void *, ANARIDevice, ANARIObject, ANARIDataType, ANARIStatusSeverity sev,
+    ANARIStatusCode, const char *msg)
+{
+  std::fprintf(stderr, "ANARI(%d): %s\n", int(sev), msg ? msg : "<null>");
+}
+
+int main(int argc, char **argv)
+{
+  Kokkos::initialize(argc, argv);
+  auto lib = anariLoadLibrary("photon", statusCallback, nullptr);
+  if (!lib) {
+    std::fprintf(stderr, "failed to load library\n");
+    return 1;
+  }
+
+  auto dev = anariNewDevice(lib, "default");
+  if (!dev) {
+    std::fprintf(stderr, "failed to create device\n");
+    anariUnloadLibrary(lib);
+    return 2;
+  }
+
+  auto frame = anariNewFrame(dev);
+  const uint32_t size[2] = {512u, 512u};
+  anariSetParameter(dev, frame, "size", ANARI_UINT32_VEC2, size);
+  anariCommitParameters(dev, frame);
+
+  anariRenderFrame(dev, frame);
+  while (!anariFrameReady(dev, frame, ANARI_WAIT))
+    ;
+
+  uint32_t w = 0, h = 0;
+  ANARIDataType type = ANARI_UNKNOWN;
+  auto *ptr = (const float *)anariMapFrame(dev, frame, "color", &w, &h, &type);
+
+  if (!ptr || type != ANARI_FLOAT32_VEC3) {
+    std::fprintf(stderr, "failed to map frame color\n");
+    anariRelease(dev, frame);
+    anariRelease(dev, dev);
+    anariUnloadLibrary(lib);
+    return 3;
+  }
+
+  std::ofstream out("anari_out.ppm", std::ios::binary);
+  out << "P3\n" << w << " " << h << "\n255\n";
+
+  for (uint32_t y = 0; y < h; ++y) {
+    for (uint32_t x = 0; x < w; ++x) {
+      photon::pt::Vec3 c{ptr[3 * (y * w + x) + 0], ptr[3 * (y * w + x) + 1], ptr[3 * (y * w + x) + 2]};
+      c = photon::pt::clamp01(c);
+      const int ir = int(255.999f * c.x);
+      const int ig = int(255.999f * c.y);
+      const int ib = int(255.999f * c.z);
+      out << ir << ' ' << ig << ' ' << ib << '\n';
+    }
+  }
+
+  anariUnmapFrame(dev, frame, "color");
+  anariRelease(dev, frame);
+  anariRelease(dev, dev);
+  anariUnloadLibrary(lib);
+
+  std::printf("wrote anari_out.ppm\n");
+  Kokkos::finalize();
+  return 0;
+}

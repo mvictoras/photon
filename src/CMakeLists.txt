@@ -3,7 +3,7 @@ set_target_properties(anari_library_photon PROPERTIES OUTPUT_NAME "anari_library
 
 opencode_enable_warnings(anari_library_photon)
 
-target_link_libraries(anari_library_photon PUBLIC Kokkos::kokkos anari)
+target_link_libraries(anari_library_photon PUBLIC Kokkos::kokkos anari helium)
 
 target_include_directories(anari_library_photon PUBLIC
   "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include"
@@ -23,6 +23,8 @@ target_sources(anari_library_photon
     photon/anari/device.cpp
     photon/anari/library.cpp
     photon/anari/entrypoint.cpp
+    photon/anari/device_impl.cpp
+    photon/anari/objects/frame.cpp
     photon/pt/pathtracer.cpp
     photon/pt/bvh/bvh.cpp
     photon/pt/scene.cpp
@@ -31,6 +33,8 @@ target_sources(anari_library_photon
     ${PROJECT_SOURCE_DIR}/include/photon/pathtracer/version.h
     ${PROJECT_SOURCE_DIR}/include/photon/anari/device.h
     ${PROJECT_SOURCE_DIR}/include/photon/anari/library.h
+    photon/anari/device_impl.h
+    ${PROJECT_SOURCE_DIR}/include/photon/anari/frame.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/bvh/bvh.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/bvh/bvh_validate.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/camera.h

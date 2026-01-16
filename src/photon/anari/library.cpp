@@ -32,7 +32,7 @@ struct Library : public anari::LibraryImpl
   ANARIDevice newDevice(const char *subtype) override
   {
     if (!subtype || std::string_view(subtype).empty() || std::strcmp(subtype, "default") == 0) {
-      return nullptr;
+      return photon::anari_device::new_device(this_library());
     }
 
     return nullptr;
