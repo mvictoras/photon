@@ -1,13 +1,12 @@
 #include "photon/anari/device.h"
 
-#include <anari/backend/DeviceImpl.h>
-
+#include "photon/anari/device_impl.h"
 
 namespace photon::anari_device {
 
-ANARIDevice new_device(ANARILibrary)
+ANARIDevice new_device(ANARILibrary library)
 {
-  return nullptr;
+  return (ANARIDevice) new Device(library);
 }
 
-}
+} // namespace photon::anari_device

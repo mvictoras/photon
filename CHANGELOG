@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Add ANARI MVP device+frame: `photon_anari_render` renders `anari_out.ppm` via `anariRenderFrame()`.
 - Add `SceneBuilder` and update `photon_render` to render a 2-quad scene (vertical + ground).
 - Add per-triangle albedo (mesh stores `albedo_per_prim`) and render it in `photon_render`.
 - Adjust default camera to frame the mesh quad.

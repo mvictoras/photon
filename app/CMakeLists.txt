@@ -17,3 +17,9 @@ target_link_libraries(photon_render PRIVATE anari_library_photon)
 add_executable(photon_debug_ray photon_debug_ray.cpp)
 
 target_link_libraries(photon_debug_ray PRIVATE anari_library_photon)
+
+add_executable(photon_anari_render photon_anari_render.cpp)
+
+target_link_libraries(photon_anari_render PRIVATE anari_library_photon anari)
+
+target_include_directories(photon_anari_render PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
