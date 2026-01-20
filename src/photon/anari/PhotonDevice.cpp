@@ -6,6 +6,11 @@
 
 #include "photon/anari/PhotonDevice.h"
 
+#include <Kokkos_Core.hpp>
+
+#include "photon/pt/pathtracer.h"
+#include "photon/pt/scene/builder.h"
+
 namespace photon::anari_device {
 
 namespace {
@@ -285,12 +290,23 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
 
   auto *out = reinterpret_cast<float *>(m_fb_bytes.data());
 
+  photon::pt::PathTracer pt;
+  pt.params.width = m_fb_w;
+  pt.params.height = m_fb_h;
+  pt.params.samples_per_pixel = 16;
+  pt.params.max_depth = 4;
+  pt.scene = photon::pt::SceneBuilder::make_two_quads();
+
+  auto pixels = pt.render();
+  auto host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, pixels);
+
   for (uint32_t y = 0; y < m_fb_h; ++y) {
     for (uint32_t x = 0; x < m_fb_w; ++x) {
       const size_t idx = size_t(y) * size_t(m_fb_w) + x;
-      out[4 * idx + 0] = float(x) / float(m_fb_w - 1);
-      out[4 * idx + 1] = float(y) / float(m_fb_h - 1);
-      out[4 * idx + 2] = 0.2f;
+      auto c = photon::pt::clamp01(host(y, x));
+      out[4 * idx + 0] = c.x;
+      out[4 * idx + 1] = c.y;
+      out[4 * idx + 2] = c.z;
       out[4 * idx + 3] = 1.f;
     }
   }

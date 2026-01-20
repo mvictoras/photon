@@ -2,6 +2,7 @@
 
 ## Unreleased
 - Add `run.sh` helper script.
+- Make ANARI `renderFrame()` call photon path tracer (replaces gradient).
 - Switch ANARI implementation to `anari::DeviceImpl` style (better compatibility with ParaView/tsd).
 - Add ANARI MVP device+frame: `photon_anari_render` renders `anari_out.ppm` via `anariRenderFrame()`.
 - Add `SceneBuilder` and update `photon_render` to render a 2-quad scene (vertical + ground).
