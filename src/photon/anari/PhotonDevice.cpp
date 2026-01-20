@@ -159,6 +159,17 @@ void PhotonDevice::setParameter(ANARIObject object, const char *name, ANARIDataT
   if (!o || !name || !mem)
     return;
 
+  if (type == ANARI_ARRAY1D || type == ANARI_ARRAY2D || type == ANARI_ARRAY3D || type == ANARI_GEOMETRY
+      || type == ANARI_SURFACE || type == ANARI_WORLD || type == ANARI_FRAME || type == ANARI_RENDERER
+      || type == ANARI_CAMERA || type == ANARI_LIGHT || type == ANARI_MATERIAL) {
+    uintptr_t h = 0;
+    std::memcpy(&h, mem, sizeof(uintptr_t));
+    std::vector<std::byte> bytes(sizeof(uintptr_t));
+    std::memcpy(bytes.data(), &h, sizeof(uintptr_t));
+    o->params[name] = std::move(bytes);
+    return;
+  }
+
   const size_t n = sizeof_anari(type);
   std::vector<std::byte> bytes(n);
   std::memcpy(bytes.data(), mem, n);
