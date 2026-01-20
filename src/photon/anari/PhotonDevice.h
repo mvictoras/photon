@@ -12,6 +12,8 @@
 #include <unordered_map>
 #include <vector>
 
+
+
 namespace photon::anari_device {
 
 struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
@@ -84,6 +86,8 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
 
   uintptr_t alloc_handle(ANARIDataType t);
   Object *get(ANARIObject o);
+  Object *getObject(uintptr_t handle) const { return const_cast<PhotonDevice *>(this)->get((ANARIObject)handle); }
+
 
   uint64_t m_next_id{1};
   std::map<uintptr_t, std::unique_ptr<Object>> m_objects;
