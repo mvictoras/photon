@@ -351,14 +351,37 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
           if (st != go->params.end() && !st->second.empty())
             subtype = reinterpret_cast<const char *>(st->second.data());
 
+          uintptr_t vtx_h = 0;
+          auto vit = go->params.find("vertex.position");
+          if (vit != go->params.end() && vit->second.size() == sizeof(uintptr_t))
+            std::memcpy(&vtx_h, vit->second.data(), sizeof(uintptr_t));
+
+          auto *va = get((ANARIObject)vtx_h);
+          if (!va || !va->memory)
+            continue;
+
+          const uint64_t nv = va->array_num_items1;
+
+          uintptr_t idx_hnd = 0;
+          auto iit = go->params.find("primitive.index");
+          if (iit != go->params.end() && iit->second.size() == sizeof(uintptr_t))
+            std::memcpy(&idx_hnd, iit->second.data(), sizeof(uintptr_t));
+          auto *ia = get((ANARIObject)idx_hnd);
+
+          uint64_t nprim = 0;
+          if (ia && ia->memory)
+            nprim = ia->array_num_items1;
+          else
+            nprim = (subtype && std::strcmp(subtype, "quad") == 0) ? (nv / 4) : (nv / 3);
+
           if (subtype && std::strcmp(subtype, "quad") == 0) {
-            total_pos += 4;
-            total_idx += 6;
-            total_prims += 2;
+            total_pos += 4 * nprim;
+            total_idx += 6 * nprim;
+            total_prims += 2 * nprim;
           } else {
-            total_pos += 3;
-            total_idx += 3;
-            total_prims += 1;
+            total_pos += 3 * nprim;
+            total_idx += 3 * nprim;
+            total_prims += 1 * nprim;
           }
         }
 
@@ -403,55 +426,73 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
           if (!va || !va->memory)
             continue;
 
+          const uint64_t nv = va->array_num_items1;
+          const float *v = reinterpret_cast<const float *>(va->memory);
+
           uintptr_t idx_hnd = 0;
           auto iit = go->params.find("primitive.index");
           if (iit != go->params.end() && iit->second.size() == sizeof(uintptr_t))
             std::memcpy(&idx_hnd, iit->second.data(), sizeof(uintptr_t));
           auto *ia = get((ANARIObject)idx_hnd);
 
-          if (subtype && std::strcmp(subtype, "quad") == 0) {
-            const float *v = reinterpret_cast<const float *>(va->memory);
-            pos_h(pos_off + 0) = {v[0], v[1], v[2]};
-            pos_h(pos_off + 1) = {v[3], v[4], v[5]};
-            pos_h(pos_off + 2) = {v[6], v[7], v[8]};
-            pos_h(pos_off + 3) = {v[9], v[10], v[11]};
+          const uint64_t nprim = (ia && ia->memory) ? ia->array_num_items1
+                                                    : ((subtype && std::strcmp(subtype, "quad") == 0) ? (nv / 4)
+                                                                                                       : (nv / 3));
 
-            uint32_t q[4] = {0, 1, 2, 3};
-            if (ia && ia->memory)
-              std::memcpy(q, ia->memory, sizeof(q));
+          for (uint64_t pi = 0; pi < nprim; ++pi) {
+            if (subtype && std::strcmp(subtype, "quad") == 0) {
+              const float *vv = v + 12 * pi;
+              pos_h(pos_off + 0) = {vv[0], vv[1], vv[2]};
+              pos_h(pos_off + 1) = {vv[3], vv[4], vv[5]};
+              pos_h(pos_off + 2) = {vv[6], vv[7], vv[8]};
+              pos_h(pos_off + 3) = {vv[9], vv[10], vv[11]};
 
-            idx_h(idx_off + 0) = photon::pt::u32(pos_off + q[0]);
-            idx_h(idx_off + 1) = photon::pt::u32(pos_off + q[1]);
-            idx_h(idx_off + 2) = photon::pt::u32(pos_off + q[2]);
-            idx_h(idx_off + 3) = photon::pt::u32(pos_off + q[0]);
-            idx_h(idx_off + 4) = photon::pt::u32(pos_off + q[2]);
-            idx_h(idx_off + 5) = photon::pt::u32(pos_off + q[3]);
+              uint32_t q[4] = {0, 1, 2, 3};
+              if (ia && ia->memory) {
+                const uint32_t *qi = reinterpret_cast<const uint32_t *>(ia->memory) + 4 * pi;
+                q[0] = qi[0];
+                q[1] = qi[1];
+                q[2] = qi[2];
+                q[3] = qi[3];
+              }
 
-            alb_h(prim_off + 0) = {0.0f, 1.0f, 0.0f};
-            alb_h(prim_off + 1) = {0.0f, 1.0f, 0.0f};
+              idx_h(idx_off + 0) = photon::pt::u32(pos_off + q[0]);
+              idx_h(idx_off + 1) = photon::pt::u32(pos_off + q[1]);
+              idx_h(idx_off + 2) = photon::pt::u32(pos_off + q[2]);
+              idx_h(idx_off + 3) = photon::pt::u32(pos_off + q[0]);
+              idx_h(idx_off + 4) = photon::pt::u32(pos_off + q[2]);
+              idx_h(idx_off + 5) = photon::pt::u32(pos_off + q[3]);
 
-            pos_off += 4;
-            idx_off += 6;
-            prim_off += 2;
-          } else {
-            const float *v = reinterpret_cast<const float *>(va->memory);
-            pos_h(pos_off + 0) = {v[0], v[1], v[2]};
-            pos_h(pos_off + 1) = {v[3], v[4], v[5]};
-            pos_h(pos_off + 2) = {v[6], v[7], v[8]};
+              alb_h(prim_off + 0) = {0.0f, 1.0f, 0.0f};
+              alb_h(prim_off + 1) = {0.0f, 1.0f, 0.0f};
 
-            uint32_t t[3] = {0, 1, 2};
-            if (ia && ia->memory)
-              std::memcpy(t, ia->memory, sizeof(t));
+              pos_off += 4;
+              idx_off += 6;
+              prim_off += 2;
+            } else {
+              const float *vv = v + 9 * pi;
+              pos_h(pos_off + 0) = {vv[0], vv[1], vv[2]};
+              pos_h(pos_off + 1) = {vv[3], vv[4], vv[5]};
+              pos_h(pos_off + 2) = {vv[6], vv[7], vv[8]};
 
-            idx_h(idx_off + 0) = photon::pt::u32(pos_off + t[0]);
-            idx_h(idx_off + 1) = photon::pt::u32(pos_off + t[1]);
-            idx_h(idx_off + 2) = photon::pt::u32(pos_off + t[2]);
+              uint32_t t[3] = {0, 1, 2};
+              if (ia && ia->memory) {
+                const uint32_t *ti = reinterpret_cast<const uint32_t *>(ia->memory) + 3 * pi;
+                t[0] = ti[0];
+                t[1] = ti[1];
+                t[2] = ti[2];
+              }
 
-            alb_h(prim_off) = {1.0f, 0.0f, 0.0f};
+              idx_h(idx_off + 0) = photon::pt::u32(pos_off + t[0]);
+              idx_h(idx_off + 1) = photon::pt::u32(pos_off + t[1]);
+              idx_h(idx_off + 2) = photon::pt::u32(pos_off + t[2]);
 
-            pos_off += 3;
-            idx_off += 3;
-            prim_off += 1;
+              alb_h(prim_off) = {1.0f, 0.0f, 0.0f};
+
+              pos_off += 3;
+              idx_off += 3;
+              prim_off += 1;
+            }
           }
         }
 
