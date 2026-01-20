@@ -11,6 +11,8 @@
 #include "photon/pt/pathtracer.h"
 #include "photon/pt/scene/builder.h"
 
+#include "photon/anari/SceneFromAnari.h"
+
 namespace photon::anari_device {
 
 namespace {
@@ -295,7 +297,83 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
   pt.params.height = m_fb_h;
   pt.params.samples_per_pixel = 16;
   pt.params.max_depth = 4;
-  pt.scene = photon::pt::SceneBuilder::make_two_quads();
+
+  std::optional<photon::pt::Scene> scene;
+
+  uintptr_t world_h = 0;
+  auto wit = o->params.find("world");
+  if (wit != o->params.end() && wit->second.size() == sizeof(uintptr_t))
+    std::memcpy(&world_h, wit->second.data(), sizeof(uintptr_t));
+
+  if (world_h != 0) {
+    auto *wo = get((ANARIObject)world_h);
+    if (wo) {
+      uintptr_t surfaces_arr = 0;
+      auto sit = wo->params.find("surface");
+      if (sit != wo->params.end() && sit->second.size() == sizeof(uintptr_t))
+        std::memcpy(&surfaces_arr, sit->second.data(), sizeof(uintptr_t));
+
+      auto *sa = get((ANARIObject)surfaces_arr);
+      if (sa && sa->object_type == ANARI_ARRAY1D && sa->memory) {
+        const auto *surfaces = reinterpret_cast<const uintptr_t *>(sa->memory);
+
+        const uintptr_t surf_h = surfaces[0];
+        auto *so = get((ANARIObject)surf_h);
+        if (so) {
+          uintptr_t geom_h = 0;
+          auto git = so->params.find("geometry");
+          if (git != so->params.end() && git->second.size() == sizeof(uintptr_t))
+            std::memcpy(&geom_h, git->second.data(), sizeof(uintptr_t));
+
+          auto *go = get((ANARIObject)geom_h);
+          if (go) {
+            uintptr_t vtx_h = 0;
+            auto vit = go->params.find("vertex.position");
+            if (vit != go->params.end() && vit->second.size() == sizeof(uintptr_t))
+              std::memcpy(&vtx_h, vit->second.data(), sizeof(uintptr_t));
+
+            auto *va = get((ANARIObject)vtx_h);
+            if (va && va->object_type == ANARI_ARRAY1D && va->memory) {
+              photon::pt::TriangleMesh mesh;
+              mesh.positions = Kokkos::View<photon::pt::Vec3 *>("pos", 3);
+              mesh.indices = Kokkos::View<photon::pt::u32 *>("idx", 3);
+              mesh.albedo_per_prim = Kokkos::View<photon::pt::Vec3 *>("alb", 1);
+
+
+              auto pos_h = Kokkos::create_mirror_view(mesh.positions);
+              auto idx_h = Kokkos::create_mirror_view(mesh.indices);
+              auto alb_h = Kokkos::create_mirror_view(mesh.albedo_per_prim);
+
+              const float *v = reinterpret_cast<const float *>(va->memory);
+              pos_h(0) = {v[0], v[1], v[2]};
+              pos_h(1) = {v[3], v[4], v[5]};
+              pos_h(2) = {v[6], v[7], v[8]};
+
+              idx_h(0) = 0;
+              idx_h(1) = 1;
+              idx_h(2) = 2;
+              alb_h(0) = {1.0f, 0.0f, 0.0f};
+
+              Kokkos::deep_copy(mesh.positions, pos_h);
+              Kokkos::deep_copy(mesh.indices, idx_h);
+              Kokkos::deep_copy(mesh.albedo_per_prim, alb_h);
+
+              photon::pt::Scene s;
+              s.mesh = mesh;
+              s.bvh = photon::pt::Bvh::build_cpu(mesh);
+              scene = std::move(s);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (scene)
+    pt.scene = std::move(*scene);
+  else
+    pt.scene = photon::pt::SceneBuilder::make_two_quads();
+
 
   auto pixels = pt.render();
   auto host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, pixels);

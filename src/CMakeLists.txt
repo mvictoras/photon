@@ -24,6 +24,7 @@ target_sources(anari_library_photon
     photon/anari/library.cpp
     photon/anari/entrypoint.cpp
     photon/anari/PhotonDevice.cpp
+    photon/anari/SceneFromAnari.cpp
     ${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/DeviceImpl.cpp
     photon/pt/pathtracer.cpp
     photon/pt/bvh/bvh.cpp
