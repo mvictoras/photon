@@ -105,7 +105,17 @@ void *PhotonDevice::mapArray(ANARIArray a)
 
 void PhotonDevice::unmapArray(ANARIArray) {}
 
-ANARIGeometry PhotonDevice::newGeometry(const char *) { return (ANARIGeometry)alloc_handle(ANARI_GEOMETRY); }
+ANARIGeometry PhotonDevice::newGeometry(const char *type)
+{
+  const uintptr_t h = alloc_handle(ANARI_GEOMETRY);
+  auto *o = get((ANARIObject)h);
+  if (o && type) {
+    const size_t n = std::strlen(type) + 1;
+    o->params["subtype"] = std::vector<std::byte>(n);
+    std::memcpy(o->params["subtype"].data(), type, n);
+  }
+  return (ANARIGeometry)h;
+}
 ANARISurface PhotonDevice::newSurface() { return (ANARISurface)alloc_handle(ANARI_SURFACE); }
 ANARIWorld PhotonDevice::newWorld() { return (ANARIWorld)alloc_handle(ANARI_WORLD); }
 ANARIRenderer PhotonDevice::newRenderer(const char *) { return (ANARIRenderer)alloc_handle(ANARI_RENDERER); }
