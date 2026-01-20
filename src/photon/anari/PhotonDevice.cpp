@@ -214,15 +214,35 @@ void *PhotonDevice::mapParameterArray3D(
 
 void PhotonDevice::unmapParameterArray(ANARIObject, const char *) {}
 
-const void *PhotonDevice::frameBufferMap(ANARIFrame, const char *, uint32_t *w, uint32_t *h, ANARIDataType *t)
+const void *PhotonDevice::frameBufferMap(ANARIFrame fb, const char *, uint32_t *w, uint32_t *h, ANARIDataType *t)
 {
+  auto *o = get((ANARIObject)fb);
+  if (!o) {
+    if (w)
+      *w = 0;
+    if (h)
+      *h = 0;
+    if (t)
+      *t = ANARI_UNKNOWN;
+    return nullptr;
+  }
+
+  uint32_t size[2] = {512u, 512u};
+  auto it = o->params.find("size");
+  if (it != o->params.end() && it->second.size() == sizeof(size))
+    std::memcpy(size, it->second.data(), sizeof(size));
+
+  m_fb_w = size[0];
+  m_fb_h = size[1];
+  m_fb_bytes.resize(size_t(m_fb_w) * size_t(m_fb_h) * 4 * sizeof(float));
+
   if (w)
     *w = m_fb_w;
   if (h)
     *h = m_fb_h;
   if (t)
     *t = ANARI_FLOAT32_VEC4;
-  return m_framebuffer.data();
+  return m_fb_bytes.data();
 }
 
 void PhotonDevice::frameBufferUnmap(ANARIFrame, const char *) {}
