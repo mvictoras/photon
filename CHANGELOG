@@ -2,6 +2,7 @@
 
 ## Unreleased
 - Add `run.sh` helper script.
+- Support `quad` geometry and multiple surfaces in ANARI `world.surface`.
 - Support `primitive.index` for ANARI triangle geometry.
 - Render ANARI `frame.world` triangle geometry (minimal world/surface/geometry path).
 - Make ANARI `renderFrame()` call photon path tracer (replaces gradient).

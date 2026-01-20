@@ -36,6 +36,7 @@ int main(int argc, char **argv)
   anariCommitParameters(dev, frame);
 
   auto geom = anariNewGeometry(dev, "triangle");
+  auto quad = anariNewGeometry(dev, "quad");
 
   const float vertices[] = {
       -0.8f, -0.8f, -2.5f,
@@ -52,11 +53,30 @@ int main(int argc, char **argv)
   anariSetParameter(dev, geom, "primitive.index", ANARI_ARRAY1D, &idx);
   anariCommitParameters(dev, geom);
 
-  auto surf = anariNewSurface(dev);
-  anariSetParameter(dev, surf, "geometry", ANARI_GEOMETRY, &geom);
-  anariCommitParameters(dev, surf);
+  const float quad_vertices[] = {
+      -1.2f, -1.0f, -3.5f,
+      +1.2f, -1.0f, -3.5f,
+      +1.2f, +1.0f, -3.5f,
+      -1.2f, +1.0f, -3.5f,
+  };
+  const uint32_t quad_indices[] = {0u, 1u, 2u, 3u};
 
-  auto surfaces = anariNewArray1D(dev, &surf, nullptr, nullptr, ANARI_SURFACE, 1);
+  auto qvtx = anariNewArray1D(dev, quad_vertices, nullptr, nullptr, ANARI_FLOAT32_VEC3, 4);
+  auto qidx = anariNewArray1D(dev, quad_indices, nullptr, nullptr, ANARI_UINT32_VEC4, 1);
+  anariSetParameter(dev, quad, "vertex.position", ANARI_ARRAY1D, &qvtx);
+  anariSetParameter(dev, quad, "primitive.index", ANARI_ARRAY1D, &qidx);
+  anariCommitParameters(dev, quad);
+
+  auto surf0 = anariNewSurface(dev);
+  anariSetParameter(dev, surf0, "geometry", ANARI_GEOMETRY, &geom);
+  anariCommitParameters(dev, surf0);
+
+  auto surf1 = anariNewSurface(dev);
+  anariSetParameter(dev, surf1, "geometry", ANARI_GEOMETRY, &quad);
+  anariCommitParameters(dev, surf1);
+
+  const ANARISurface surf_list[] = {surf0, surf1};
+  auto surfaces = anariNewArray1D(dev, surf_list, nullptr, nullptr, ANARI_SURFACE, 2);
 
   auto world = anariNewWorld(dev);
   anariSetParameter(dev, world, "surface", ANARI_ARRAY1D, &surfaces);

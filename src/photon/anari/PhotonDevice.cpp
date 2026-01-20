@@ -76,6 +76,8 @@ ANARIArray1D PhotonDevice::newArray1D(
 {
   const uintptr_t h = alloc_handle(ANARI_ARRAY1D);
   auto *o = get((ANARIObject)h);
+  o->array_element_type = type;
+  o->array_num_items1 = n1;
   o->memory = appMemory ? appMemory : (const void *)new char[bytes_for(type, n1)];
   o->deleter = appMemory ? deleter : owned_memory_deleter;
   o->userdata = appMemory ? userData : nullptr;
@@ -87,6 +89,9 @@ ANARIArray2D PhotonDevice::newArray2D(
 {
   const uintptr_t h = alloc_handle(ANARI_ARRAY2D);
   auto *o = get((ANARIObject)h);
+  o->array_element_type = type;
+  o->array_num_items1 = n1;
+  o->array_num_items2 = n2;
   o->memory = appMemory ? appMemory : (const void *)new char[bytes_for(type, n1, n2)];
   o->deleter = appMemory ? deleter : owned_memory_deleter;
   o->userdata = appMemory ? userData : nullptr;
@@ -98,6 +103,10 @@ ANARIArray3D PhotonDevice::newArray3D(const void *appMemory, ANARIMemoryDeleter 
 {
   const uintptr_t h = alloc_handle(ANARI_ARRAY3D);
   auto *o = get((ANARIObject)h);
+  o->array_element_type = type;
+  o->array_num_items1 = n1;
+  o->array_num_items2 = n2;
+  o->array_num_items3 = n3;
   o->memory = appMemory ? appMemory : (const void *)new char[bytes_for(type, n1, n2, n3)];
   o->deleter = appMemory ? deleter : owned_memory_deleter;
   o->userdata = appMemory ? userData : nullptr;
@@ -314,70 +323,146 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
         std::memcpy(&surfaces_arr, sit->second.data(), sizeof(uintptr_t));
 
       auto *sa = get((ANARIObject)surfaces_arr);
-      if (sa && sa->object_type == ANARI_ARRAY1D && sa->memory) {
+      if (sa && sa->object_type == ANARI_ARRAY1D && sa->memory && sa->array_num_items1 > 0) {
         const auto *surfaces = reinterpret_cast<const uintptr_t *>(sa->memory);
 
-        photon::pt::TriangleMesh mesh;
-        mesh.positions = Kokkos::View<photon::pt::Vec3 *>("pos", 3);
-        mesh.indices = Kokkos::View<photon::pt::u32 *>("idx", 3);
-        mesh.albedo_per_prim = Kokkos::View<photon::pt::Vec3 *>("alb", 1);
+        const uint64_t nsurf = sa->array_num_items1;
 
-        auto pos_h = Kokkos::create_mirror_view(mesh.positions);
-        auto idx_h = Kokkos::create_mirror_view(mesh.indices);
-        auto alb_h = Kokkos::create_mirror_view(mesh.albedo_per_prim);
+        uint64_t total_pos = 0;
+        uint64_t total_idx = 0;
+        uint64_t total_prims = 0;
 
-        const uintptr_t surf_h = surfaces[0];
-        auto *so = get((ANARIObject)surf_h);
-        if (so) {
+        for (uint64_t si = 0; si < nsurf; ++si) {
+          auto *so = get((ANARIObject)surfaces[si]);
+          if (!so)
+            continue;
+
           uintptr_t geom_h = 0;
           auto git = so->params.find("geometry");
           if (git != so->params.end() && git->second.size() == sizeof(uintptr_t))
             std::memcpy(&geom_h, git->second.data(), sizeof(uintptr_t));
 
           auto *go = get((ANARIObject)geom_h);
-          if (go) {
-            uintptr_t vtx_h = 0;
-            auto vit = go->params.find("vertex.position");
-            if (vit != go->params.end() && vit->second.size() == sizeof(uintptr_t))
-              std::memcpy(&vtx_h, vit->second.data(), sizeof(uintptr_t));
+          if (!go)
+            continue;
 
-            auto *va = get((ANARIObject)vtx_h);
-            if (va && va->object_type == ANARI_ARRAY1D && va->memory) {
-              const float *v = reinterpret_cast<const float *>(va->memory);
-              pos_h(0) = {v[0], v[1], v[2]};
-              pos_h(1) = {v[3], v[4], v[5]};
-              pos_h(2) = {v[6], v[7], v[8]};
+          const char *subtype = nullptr;
+          auto st = go->params.find("subtype");
+          if (st != go->params.end() && !st->second.empty())
+            subtype = reinterpret_cast<const char *>(st->second.data());
 
-              uintptr_t idx_hnd = 0;
-              auto iit = go->params.find("primitive.index");
-              if (iit != go->params.end() && iit->second.size() == sizeof(uintptr_t))
-                std::memcpy(&idx_hnd, iit->second.data(), sizeof(uintptr_t));
-
-              auto *ia = get((ANARIObject)idx_hnd);
-              if (ia && ia->object_type == ANARI_ARRAY1D && ia->memory) {
-                const uint32_t *ii = reinterpret_cast<const uint32_t *>(ia->memory);
-                idx_h(0) = ii[0];
-                idx_h(1) = ii[1];
-                idx_h(2) = ii[2];
-              } else {
-                idx_h(0) = 0;
-                idx_h(1) = 1;
-                idx_h(2) = 2;
-              }
-
-              alb_h(0) = {1.0f, 0.0f, 0.0f};
-
-              Kokkos::deep_copy(mesh.positions, pos_h);
-              Kokkos::deep_copy(mesh.indices, idx_h);
-              Kokkos::deep_copy(mesh.albedo_per_prim, alb_h);
-
-              photon::pt::Scene s;
-              s.mesh = mesh;
-              s.bvh = photon::pt::Bvh::build_cpu(mesh);
-              scene = std::move(s);
-            }
+          if (subtype && std::strcmp(subtype, "quad") == 0) {
+            total_pos += 4;
+            total_idx += 6;
+            total_prims += 2;
+          } else {
+            total_pos += 3;
+            total_idx += 3;
+            total_prims += 1;
           }
         }
+
+        photon::pt::TriangleMesh mesh;
+        mesh.positions = Kokkos::View<photon::pt::Vec3 *>("pos", total_pos);
+        mesh.indices = Kokkos::View<photon::pt::u32 *>("idx", total_idx);
+        mesh.albedo_per_prim = Kokkos::View<photon::pt::Vec3 *>("alb", total_prims);
+
+        auto pos_h = Kokkos::create_mirror_view(mesh.positions);
+        auto idx_h = Kokkos::create_mirror_view(mesh.indices);
+        auto alb_h = Kokkos::create_mirror_view(mesh.albedo_per_prim);
+
+        uint64_t pos_off = 0;
+        uint64_t idx_off = 0;
+        uint64_t prim_off = 0;
+
+        for (uint64_t si = 0; si < nsurf; ++si) {
+          auto *so = get((ANARIObject)surfaces[si]);
+          if (!so)
+            continue;
+
+          uintptr_t geom_h = 0;
+          auto git = so->params.find("geometry");
+          if (git != so->params.end() && git->second.size() == sizeof(uintptr_t))
+            std::memcpy(&geom_h, git->second.data(), sizeof(uintptr_t));
+
+          auto *go = get((ANARIObject)geom_h);
+          if (!go)
+            continue;
+
+          const char *subtype = nullptr;
+          auto st = go->params.find("subtype");
+          if (st != go->params.end() && !st->second.empty())
+            subtype = reinterpret_cast<const char *>(st->second.data());
+
+          uintptr_t vtx_h = 0;
+          auto vit = go->params.find("vertex.position");
+          if (vit != go->params.end() && vit->second.size() == sizeof(uintptr_t))
+            std::memcpy(&vtx_h, vit->second.data(), sizeof(uintptr_t));
+
+          auto *va = get((ANARIObject)vtx_h);
+          if (!va || !va->memory)
+            continue;
+
+          uintptr_t idx_hnd = 0;
+          auto iit = go->params.find("primitive.index");
+          if (iit != go->params.end() && iit->second.size() == sizeof(uintptr_t))
+            std::memcpy(&idx_hnd, iit->second.data(), sizeof(uintptr_t));
+          auto *ia = get((ANARIObject)idx_hnd);
+
+          if (subtype && std::strcmp(subtype, "quad") == 0) {
+            const float *v = reinterpret_cast<const float *>(va->memory);
+            pos_h(pos_off + 0) = {v[0], v[1], v[2]};
+            pos_h(pos_off + 1) = {v[3], v[4], v[5]};
+            pos_h(pos_off + 2) = {v[6], v[7], v[8]};
+            pos_h(pos_off + 3) = {v[9], v[10], v[11]};
+
+            uint32_t q[4] = {0, 1, 2, 3};
+            if (ia && ia->memory)
+              std::memcpy(q, ia->memory, sizeof(q));
+
+            idx_h(idx_off + 0) = photon::pt::u32(pos_off + q[0]);
+            idx_h(idx_off + 1) = photon::pt::u32(pos_off + q[1]);
+            idx_h(idx_off + 2) = photon::pt::u32(pos_off + q[2]);
+            idx_h(idx_off + 3) = photon::pt::u32(pos_off + q[0]);
+            idx_h(idx_off + 4) = photon::pt::u32(pos_off + q[2]);
+            idx_h(idx_off + 5) = photon::pt::u32(pos_off + q[3]);
+
+            alb_h(prim_off + 0) = {0.0f, 1.0f, 0.0f};
+            alb_h(prim_off + 1) = {0.0f, 1.0f, 0.0f};
+
+            pos_off += 4;
+            idx_off += 6;
+            prim_off += 2;
+          } else {
+            const float *v = reinterpret_cast<const float *>(va->memory);
+            pos_h(pos_off + 0) = {v[0], v[1], v[2]};
+            pos_h(pos_off + 1) = {v[3], v[4], v[5]};
+            pos_h(pos_off + 2) = {v[6], v[7], v[8]};
+
+            uint32_t t[3] = {0, 1, 2};
+            if (ia && ia->memory)
+              std::memcpy(t, ia->memory, sizeof(t));
+
+            idx_h(idx_off + 0) = photon::pt::u32(pos_off + t[0]);
+            idx_h(idx_off + 1) = photon::pt::u32(pos_off + t[1]);
+            idx_h(idx_off + 2) = photon::pt::u32(pos_off + t[2]);
+
+            alb_h(prim_off) = {1.0f, 0.0f, 0.0f};
+
+            pos_off += 3;
+            idx_off += 3;
+            prim_off += 1;
+          }
+        }
+
+        Kokkos::deep_copy(mesh.positions, pos_h);
+        Kokkos::deep_copy(mesh.indices, idx_h);
+        Kokkos::deep_copy(mesh.albedo_per_prim, alb_h);
+
+        photon::pt::Scene s;
+        s.mesh = mesh;
+        s.bvh = photon::pt::Bvh::build_cpu(mesh);
+        scene = std::move(s);
       }
     }
   }
