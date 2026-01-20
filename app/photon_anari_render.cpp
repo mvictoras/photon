@@ -35,6 +35,31 @@ int main(int argc, char **argv)
   anariSetParameter(dev, frame, "size", ANARI_UINT32_VEC2, size);
   anariCommitParameters(dev, frame);
 
+  auto geom = anariNewGeometry(dev, "triangle");
+
+  const float vertices[] = {
+      -0.8f, -0.8f, -2.5f,
+      +0.8f, -0.8f, -2.5f,
+      0.0f, +0.8f, -2.5f,
+  };
+
+  auto vtx = anariNewArray1D(dev, vertices, nullptr, nullptr, ANARI_FLOAT32_VEC3, 3);
+  anariSetParameter(dev, geom, "vertex.position", ANARI_ARRAY1D, &vtx);
+  anariCommitParameters(dev, geom);
+
+  auto surf = anariNewSurface(dev);
+  anariSetParameter(dev, surf, "geometry", ANARI_GEOMETRY, &geom);
+  anariCommitParameters(dev, surf);
+
+  auto surfaces = anariNewArray1D(dev, &surf, nullptr, nullptr, ANARI_SURFACE, 1);
+
+  auto world = anariNewWorld(dev);
+  anariSetParameter(dev, world, "surface", ANARI_ARRAY1D, &surfaces);
+  anariCommitParameters(dev, world);
+
+  anariSetParameter(dev, frame, "world", ANARI_WORLD, &world);
+  anariCommitParameters(dev, frame);
+
   anariRenderFrame(dev, frame);
   while (!anariFrameReady(dev, frame, ANARI_WAIT))
     ;
