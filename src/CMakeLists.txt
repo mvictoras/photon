@@ -23,8 +23,8 @@ target_sources(anari_library_photon
     photon/anari/device.cpp
     photon/anari/library.cpp
     photon/anari/entrypoint.cpp
-    photon/anari/device_impl.cpp
-    photon/anari/objects/frame.cpp
+    photon/anari/PhotonDevice.cpp
+    ${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/DeviceImpl.cpp
     photon/pt/pathtracer.cpp
     photon/pt/bvh/bvh.cpp
     photon/pt/scene.cpp
@@ -33,8 +33,7 @@ target_sources(anari_library_photon
     ${PROJECT_SOURCE_DIR}/include/photon/pathtracer/version.h
     ${PROJECT_SOURCE_DIR}/include/photon/anari/device.h
     ${PROJECT_SOURCE_DIR}/include/photon/anari/library.h
-    photon/anari/device_impl.h
-    ${PROJECT_SOURCE_DIR}/include/photon/anari/frame.h
+    photon/anari/PhotonDevice.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/bvh/bvh.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/bvh/bvh_validate.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/camera.h
