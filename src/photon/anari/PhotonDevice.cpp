@@ -260,15 +260,17 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
 
   m_fb_w = size[0];
   m_fb_h = size[1];
-  m_framebuffer.assign(size_t(m_fb_w) * size_t(m_fb_h) * 4, 0.f);
+  m_fb_bytes.resize(size_t(m_fb_w) * size_t(m_fb_h) * 4 * sizeof(float));
+
+  auto *out = reinterpret_cast<float *>(m_fb_bytes.data());
 
   for (uint32_t y = 0; y < m_fb_h; ++y) {
     for (uint32_t x = 0; x < m_fb_w; ++x) {
       const size_t idx = size_t(y) * size_t(m_fb_w) + x;
-      m_framebuffer[4 * idx + 0] = float(x) / float(m_fb_w - 1);
-      m_framebuffer[4 * idx + 1] = float(y) / float(m_fb_h - 1);
-      m_framebuffer[4 * idx + 2] = 0.2f;
-      m_framebuffer[4 * idx + 3] = 1.f;
+      out[4 * idx + 0] = float(x) / float(m_fb_w - 1);
+      out[4 * idx + 1] = float(y) / float(m_fb_h - 1);
+      out[4 * idx + 2] = 0.2f;
+      out[4 * idx + 3] = 1.f;
     }
   }
 }
