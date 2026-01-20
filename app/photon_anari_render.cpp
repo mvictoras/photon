@@ -43,8 +43,13 @@ int main(int argc, char **argv)
       0.0f, +0.8f, -2.5f,
   };
 
+  const uint32_t indices[] = {0u, 1u, 2u};
+
   auto vtx = anariNewArray1D(dev, vertices, nullptr, nullptr, ANARI_FLOAT32_VEC3, 3);
+  auto idx = anariNewArray1D(dev, indices, nullptr, nullptr, ANARI_UINT32_VEC3, 1);
+
   anariSetParameter(dev, geom, "vertex.position", ANARI_ARRAY1D, &vtx);
+  anariSetParameter(dev, geom, "primitive.index", ANARI_ARRAY1D, &idx);
   anariCommitParameters(dev, geom);
 
   auto surf = anariNewSurface(dev);

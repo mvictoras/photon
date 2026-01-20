@@ -317,6 +317,15 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
       if (sa && sa->object_type == ANARI_ARRAY1D && sa->memory) {
         const auto *surfaces = reinterpret_cast<const uintptr_t *>(sa->memory);
 
+        photon::pt::TriangleMesh mesh;
+        mesh.positions = Kokkos::View<photon::pt::Vec3 *>("pos", 3);
+        mesh.indices = Kokkos::View<photon::pt::u32 *>("idx", 3);
+        mesh.albedo_per_prim = Kokkos::View<photon::pt::Vec3 *>("alb", 1);
+
+        auto pos_h = Kokkos::create_mirror_view(mesh.positions);
+        auto idx_h = Kokkos::create_mirror_view(mesh.indices);
+        auto alb_h = Kokkos::create_mirror_view(mesh.albedo_per_prim);
+
         const uintptr_t surf_h = surfaces[0];
         auto *so = get((ANARIObject)surf_h);
         if (so) {
@@ -334,24 +343,28 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
 
             auto *va = get((ANARIObject)vtx_h);
             if (va && va->object_type == ANARI_ARRAY1D && va->memory) {
-              photon::pt::TriangleMesh mesh;
-              mesh.positions = Kokkos::View<photon::pt::Vec3 *>("pos", 3);
-              mesh.indices = Kokkos::View<photon::pt::u32 *>("idx", 3);
-              mesh.albedo_per_prim = Kokkos::View<photon::pt::Vec3 *>("alb", 1);
-
-
-              auto pos_h = Kokkos::create_mirror_view(mesh.positions);
-              auto idx_h = Kokkos::create_mirror_view(mesh.indices);
-              auto alb_h = Kokkos::create_mirror_view(mesh.albedo_per_prim);
-
               const float *v = reinterpret_cast<const float *>(va->memory);
               pos_h(0) = {v[0], v[1], v[2]};
               pos_h(1) = {v[3], v[4], v[5]};
               pos_h(2) = {v[6], v[7], v[8]};
 
-              idx_h(0) = 0;
-              idx_h(1) = 1;
-              idx_h(2) = 2;
+              uintptr_t idx_hnd = 0;
+              auto iit = go->params.find("primitive.index");
+              if (iit != go->params.end() && iit->second.size() == sizeof(uintptr_t))
+                std::memcpy(&idx_hnd, iit->second.data(), sizeof(uintptr_t));
+
+              auto *ia = get((ANARIObject)idx_hnd);
+              if (ia && ia->object_type == ANARI_ARRAY1D && ia->memory) {
+                const uint32_t *ii = reinterpret_cast<const uint32_t *>(ia->memory);
+                idx_h(0) = ii[0];
+                idx_h(1) = ii[1];
+                idx_h(2) = ii[2];
+              } else {
+                idx_h(0) = 0;
+                idx_h(1) = 1;
+                idx_h(2) = 2;
+              }
+
               alb_h(0) = {1.0f, 0.0f, 0.0f};
 
               Kokkos::deep_copy(mesh.positions, pos_h);
