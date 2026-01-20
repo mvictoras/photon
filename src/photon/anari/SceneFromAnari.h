@@ -3,6 +3,7 @@
 #include <anari/anari.h>
 
 #include <optional>
+#include <cstdint>
 
 #include "photon/pt/scene.h"
 
