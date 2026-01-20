@@ -81,12 +81,18 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
     const void *userdata{nullptr};
     ANARIMemoryDeleter deleter{nullptr};
 
+    ANARIDataType array_element_type{ANARI_UNKNOWN};
+    uint64_t array_num_items1{0};
+    uint64_t array_num_items2{0};
+    uint64_t array_num_items3{0};
+
     std::unordered_map<std::string, std::vector<std::byte>> params;
   };
 
   uintptr_t alloc_handle(ANARIDataType t);
   Object *get(ANARIObject o);
   Object *getObject(uintptr_t handle) const { return const_cast<PhotonDevice *>(this)->get((ANARIObject)handle); }
+
 
 
   uint64_t m_next_id{1};
