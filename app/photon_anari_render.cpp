@@ -43,7 +43,7 @@ int main(int argc, char **argv)
   ANARIDataType type = ANARI_UNKNOWN;
   auto *ptr = (const float *)anariMapFrame(dev, frame, "color", &w, &h, &type);
 
-  if (!ptr || type != ANARI_FLOAT32_VEC3) {
+  if (!ptr || (type != ANARI_FLOAT32_VEC3 && type != ANARI_FLOAT32_VEC4)) {
     std::fprintf(stderr, "failed to map frame color\n");
     anariRelease(dev, frame);
     anariRelease(dev, dev);
@@ -54,9 +54,12 @@ int main(int argc, char **argv)
   std::ofstream out("anari_out.ppm", std::ios::binary);
   out << "P3\n" << w << " " << h << "\n255\n";
 
+  const uint32_t comps = (type == ANARI_FLOAT32_VEC4) ? 4u : 3u;
+
   for (uint32_t y = 0; y < h; ++y) {
     for (uint32_t x = 0; x < w; ++x) {
-      photon::pt::Vec3 c{ptr[3 * (y * w + x) + 0], ptr[3 * (y * w + x) + 1], ptr[3 * (y * w + x) + 2]};
+      const uint32_t idx = y * w + x;
+      photon::pt::Vec3 c{ptr[comps * idx + 0], ptr[comps * idx + 1], ptr[comps * idx + 2]};
       c = photon::pt::clamp01(c);
       const int ir = int(255.999f * c.x);
       const int ig = int(255.999f * c.y);
