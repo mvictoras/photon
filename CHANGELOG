@@ -2,6 +2,7 @@
 
 ## Unreleased
 - Add `run.sh` helper script.
+- Render ANARI `frame.world` triangle geometry (minimal world/surface/geometry path).
 - Make ANARI `renderFrame()` call photon path tracer (replaces gradient).
 - Switch ANARI implementation to `anari::DeviceImpl` style (better compatibility with ParaView/tsd).
 - Add ANARI MVP device+frame: `photon_anari_render` renders `anari_out.ppm` via `anariRenderFrame()`.
