@@ -17,6 +17,7 @@ namespace photon::anari_device {
 
 namespace {
 
+
 void owned_memory_deleter(const void *, const void *mem)
 {
   delete[] static_cast<const char *>(mem);
@@ -314,7 +315,10 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
   if (wit != o->params.end() && wit->second.size() == sizeof(uintptr_t))
     std::memcpy(&world_h, wit->second.data(), sizeof(uintptr_t));
 
-  if (world_h != 0) {
+  if (world_h == 0) {
+    status_report(*this, (ANARIObject)fb, ANARI_FRAME, ANARI_SEVERITY_WARNING, ANARI_STATUS_NO_ERROR,
+        "missing required parameter 'world' on frame");
+  } else {
     auto *wo = get((ANARIObject)world_h);
     if (wo) {
       uintptr_t surfaces_arr = 0;

@@ -71,6 +71,9 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
   int frameReady(ANARIFrame, ANARIWaitMask) override;
   void discardFrame(ANARIFrame) override;
 
+  void report(ANARIObject source, ANARIDataType sourceType, ANARIStatusSeverity severity, ANARIStatusCode code,
+      const char *msg);
+
  private:
   struct Object
   {
