@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
+
 namespace photon::pt {
 struct Camera;
 struct Scene;
@@ -108,9 +109,15 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
 
   uint64_t m_next_id{1};
   std::map<uintptr_t, std::unique_ptr<Object>> m_objects;
-  std::vector<float> m_framebuffer;
-  std::vector<char> m_fb_bytes;
-  uint32_t m_fb_w{0}, m_fb_h{0};
+   std::vector<float> m_framebuffer;
+   std::vector<char> m_fb_bytes;
+   uint32_t m_fb_w{0}, m_fb_h{0};
+
+   std::vector<float> m_channel_color;
+   std::vector<float> m_channel_depth;
+   std::vector<float> m_channel_normal;
+   std::vector<float> m_channel_albedo;
+
 };
 
 }

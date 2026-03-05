@@ -10,6 +10,7 @@
 
 #include "photon/pt/bvh/bvh.h"
 #include "photon/pt/geom/triangle_mesh.h"
+#include "photon/pt/camera.h"
 #include "photon/pt/math.h"
 #include "photon/pt/scene.h"
 
@@ -122,11 +123,11 @@ std::optional<photon::pt::Scene> build_scene_from_anari(ANARIWorld world, const 
   photon::pt::TriangleMesh mesh;
   mesh.positions = Kokkos::View<photon::pt::Vec3 *>("pos", total_pos);
   mesh.indices = Kokkos::View<photon::pt::u32 *>("idx", total_idx);
-  mesh.albedo_per_prim = Kokkos::View<photon::pt::Vec3 *>("alb", total_prims);
+  mesh.material_ids = Kokkos::View<photon::pt::u32 *>("mat_id", total_prims);
 
   auto pos_h = Kokkos::create_mirror_view(mesh.positions);
   auto idx_h = Kokkos::create_mirror_view(mesh.indices);
-  auto alb_h = Kokkos::create_mirror_view(mesh.albedo_per_prim);
+  auto mat_id_h = Kokkos::create_mirror_view(mesh.material_ids);
 
   uint64_t pos_off = 0;
   uint64_t idx_off = 0;
@@ -189,8 +190,8 @@ std::optional<photon::pt::Scene> build_scene_from_anari(ANARIWorld world, const 
         idx_h(idx_off + 4) = photon::pt::u32(pos_off + q[2]);
         idx_h(idx_off + 5) = photon::pt::u32(pos_off + q[3]);
 
-        alb_h(prim_off + 0) = {0.0f, 1.0f, 0.0f};
-        alb_h(prim_off + 1) = {0.0f, 1.0f, 0.0f};
+        mat_id_h(prim_off + 0) = 0;
+        mat_id_h(prim_off + 1) = 0;
 
         pos_off += 4;
         idx_off += 6;
@@ -213,7 +214,7 @@ std::optional<photon::pt::Scene> build_scene_from_anari(ANARIWorld world, const 
         idx_h(idx_off + 1) = photon::pt::u32(pos_off + t[1]);
         idx_h(idx_off + 2) = photon::pt::u32(pos_off + t[2]);
 
-        alb_h(prim_off) = {1.0f, 0.0f, 0.0f};
+        mat_id_h(prim_off) = 0;
 
         pos_off += 3;
         idx_off += 3;
@@ -224,12 +225,53 @@ std::optional<photon::pt::Scene> build_scene_from_anari(ANARIWorld world, const 
 
   Kokkos::deep_copy(mesh.positions, pos_h);
   Kokkos::deep_copy(mesh.indices, idx_h);
-  Kokkos::deep_copy(mesh.albedo_per_prim, alb_h);
+  Kokkos::deep_copy(mesh.material_ids, mat_id_h);
 
   photon::pt::Scene s;
   s.mesh = mesh;
   s.bvh = photon::pt::Bvh::build_cpu(mesh);
+
+  auto mats_h = Kokkos::View<photon::pt::Material *>("materials", 1);
+  auto mats_host = Kokkos::create_mirror_view(mats_h);
+  mats_host(0) = photon::pt::Material{};
+  Kokkos::deep_copy(mats_h, mats_host);
+  s.materials = mats_h;
+  s.material_count = 1;
+
   return s;
+}
+
+photon::pt::Camera build_camera_from_anari(ANARIFrame frame, const PhotonDevice &dev)
+{
+  auto *fo = dev.getObject(uintptr_t(frame));
+
+  uintptr_t cam_h = 0;
+  if (fo)
+    read_handle(fo, "camera", cam_h);
+
+  photon::pt::Vec3 pos{0.f, 0.f, 5.f};
+  photon::pt::Vec3 dir{0.f, 0.f, -1.f};
+  photon::pt::Vec3 up{0.f, 1.f, 0.f};
+
+  float fovy_rad = 0.7f;
+  float aspect = 1.f;
+  float aperture_radius = 0.f;
+  float focus_dist = 1.f;
+
+  if (cam_h != 0) {
+    auto *co = dev.getObject(cam_h);
+
+    read_param(co, "position", pos);
+    read_param(co, "direction", dir);
+    read_param(co, "up", up);
+    read_param(co, "fovy", fovy_rad);
+    read_param(co, "aspect", aspect);
+    read_param(co, "apertureRadius", aperture_radius);
+    read_param(co, "focusDistance", focus_dist);
+  }
+
+  const float fovy_deg = fovy_rad * 180.f / 3.1415926535f;
+  return photon::pt::Camera::make_perspective(pos, pos + dir, up, fovy_deg, aspect, 2.f * aperture_radius, focus_dist);
 }
 
 }
