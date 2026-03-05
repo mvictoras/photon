@@ -9,6 +9,7 @@ namespace photon::pt {
 struct SceneBuilder
 {
   static Scene make_two_quads();
+  static Scene make_cornell_box();
 };
 
 } // namespace photon::pt
