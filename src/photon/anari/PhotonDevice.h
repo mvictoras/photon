@@ -8,11 +8,15 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-
+namespace photon::pt {
+struct Camera;
+struct Scene;
+}
 
 namespace photon::anari_device {
 
@@ -74,8 +78,9 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
   void report(ANARIObject source, ANARIDataType sourceType, ANARIStatusSeverity severity, ANARIStatusCode code,
       const char *msg);
 
- private:
+  public:
   struct Object
+
   {
     ANARIDataType object_type{ANARI_UNKNOWN};
     int64_t refcount{1};
@@ -92,9 +97,12 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
     std::unordered_map<std::string, std::vector<std::byte>> params;
   };
 
+  Object *getObject(uintptr_t handle) const { return const_cast<PhotonDevice *>(this)->get((ANARIObject)handle); }
+
+ private:
+
   uintptr_t alloc_handle(ANARIDataType t);
   Object *get(ANARIObject o);
-  Object *getObject(uintptr_t handle) const { return const_cast<PhotonDevice *>(this)->get((ANARIObject)handle); }
 
 
 
