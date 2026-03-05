@@ -316,7 +316,7 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
     std::memcpy(&world_h, wit->second.data(), sizeof(uintptr_t));
 
   if (world_h == 0) {
-    status_report(*this, (ANARIObject)fb, ANARI_FRAME, ANARI_SEVERITY_WARNING, ANARI_STATUS_NO_ERROR,
+    report((ANARIObject)fb, ANARI_FRAME, ANARI_SEVERITY_WARNING, ANARI_STATUS_NO_ERROR,
         "missing required parameter 'world' on frame");
   } else {
     auto *wo = get((ANARIObject)world_h);
@@ -534,6 +534,8 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
 }
 
 int PhotonDevice::frameReady(ANARIFrame, ANARIWaitMask) { return 1; }
+
+void PhotonDevice::report(ANARIObject, ANARIDataType, ANARIStatusSeverity, ANARIStatusCode, const char *) {}
 
 void PhotonDevice::discardFrame(ANARIFrame) {}
 
