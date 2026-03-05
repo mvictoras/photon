@@ -44,6 +44,9 @@ target_sources(anari_library_photon
     ${PROJECT_SOURCE_DIR}/include/photon/pt/material.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/math.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/math_aabb.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/math_vec2.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/math_mat4.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/color.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/pathtracer.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/ray.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/rng.h
