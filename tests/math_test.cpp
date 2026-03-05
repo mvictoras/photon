@@ -2,6 +2,7 @@
 #include "photon/pt/math_mat4.h"
 #include "photon/pt/math_vec2.h"
 #include "photon/pt/color.h"
+#include "photon/pt/tone_mapping.h"
 
 #include <Kokkos_Core.hpp>
 
