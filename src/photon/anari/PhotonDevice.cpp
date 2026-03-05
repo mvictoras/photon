@@ -9,6 +9,7 @@
 #include <Kokkos_Core.hpp>
 
 #include "photon/pt/pathtracer.h"
+#include "photon/pt/backend/kokkos_backend.h"
 #include "photon/pt/scene/builder.h"
 
 #include "photon/anari/SceneFromAnari.h"
@@ -512,14 +513,21 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
     }
   }
 
+  photon::pt::Scene pt_scene;
   if (scene)
-    pt.scene = std::move(*scene);
+    pt_scene = std::move(*scene);
   else
-    pt.scene = photon::pt::SceneBuilder::make_two_quads();
+    pt_scene = photon::pt::SceneBuilder::make_two_quads();
 
+  auto backend = std::make_unique<photon::pt::KokkosBackend>();
+  backend->build_accel(pt_scene);
 
-  auto pixels = pt.render();
-  auto host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, pixels);
+  pt.set_scene(pt_scene);
+  pt.set_backend(std::move(backend));
+
+  auto result = pt.render();
+  auto host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.color);
+
 
   for (uint32_t y = 0; y < m_fb_h; ++y) {
     for (uint32_t x = 0; x < m_fb_w; ++x) {

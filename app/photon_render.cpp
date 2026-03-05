@@ -6,6 +6,7 @@
 
 #include "photon/pt/pathtracer.h"
 #include "photon/pt/scene/builder.h"
+#include "photon/pt/backend/kokkos_backend.h"
 
 namespace {
 
@@ -41,10 +42,16 @@ int main(int argc, char **argv)
     pt.params.height = 512;
     pt.params.samples_per_pixel = 32;
     pt.params.max_depth = 8;
-    pt.scene = photon::pt::SceneBuilder::make_two_quads();
 
-    auto pixels = pt.render();
-    write_ppm("out.ppm", pixels);
+    auto scene = photon::pt::SceneBuilder::make_two_quads();
+    auto backend = std::make_unique<photon::pt::KokkosBackend>();
+    backend->build_accel(scene);
+
+    pt.set_scene(scene);
+    pt.set_backend(std::move(backend));
+
+    auto result = pt.render();
+    write_ppm("out.ppm", result.color);
     std::cout << "wrote out.ppm\n";
   }
   Kokkos::finalize();
