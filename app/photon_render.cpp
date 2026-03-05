@@ -3,10 +3,12 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <cstdint>
 
 #include "photon/pt/pathtracer.h"
 #include "photon/pt/scene/builder.h"
-#include "photon/pt/backend/kokkos_backend.h"
+#include "photon/pt/backend/ray_backend.h"
+#include "photon/pt/tone_mapping.h"
 
 namespace {
 
