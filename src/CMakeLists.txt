@@ -31,6 +31,7 @@ target_sources(anari_library_photon
     photon/pt/scene.cpp
     photon/pt/scene/builder.cpp
     photon/pt/environment_map.cpp
+    photon/pt/denoiser.cpp
     photon/pt/backend/kokkos_backend.cpp
     photon/pt/backend/embree_backend.cpp
     photon/pt/backend/optix_backend.cpp
@@ -50,6 +51,7 @@ target_sources(anari_library_photon
     ${PROJECT_SOURCE_DIR}/include/photon/pt/material.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/disney_bsdf.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/math.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/tone_mapping.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/math_aabb.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/math_vec2.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/math_mat4.h
@@ -61,6 +63,7 @@ target_sources(anari_library_photon
     ${PROJECT_SOURCE_DIR}/include/photon/pt/volume.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/light.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/environment_map.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/denoiser.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/texture.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/scene.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/scene/builder.h
