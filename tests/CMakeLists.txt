@@ -10,6 +10,7 @@ add_executable(photon_backend_test backend_test.cpp)
 add_executable(photon_scene_test scene_test.cpp)
 add_executable(photon_camera_test camera_test.cpp)
 add_executable(photon_pathtracer_test pathtracer_test.cpp)
+add_executable(photon_volume_test volume_test.cpp)
 
 target_link_libraries(photon_version_test PRIVATE anari_library_photon)
 
@@ -25,6 +26,7 @@ target_link_libraries(photon_backend_test PRIVATE anari_library_photon)
 target_link_libraries(photon_scene_test PRIVATE anari_library_photon)
 target_link_libraries(photon_camera_test PRIVATE anari_library_photon)
 target_link_libraries(photon_pathtracer_test PRIVATE anari_library_photon)
+target_link_libraries(photon_volume_test PRIVATE anari_library_photon)
 
 add_test(NAME photon_version_test COMMAND $<TARGET_FILE:photon_version_test>)
 add_test(NAME photon_pt_smoke_test COMMAND $<TARGET_FILE:photon_pt_smoke_test>)
@@ -37,5 +39,6 @@ add_test(NAME photon_texture_test COMMAND $<TARGET_FILE:photon_texture_test>)
 add_test(NAME photon_scene_test COMMAND $<TARGET_FILE:photon_scene_test>)
 add_test(NAME photon_camera_test COMMAND $<TARGET_FILE:photon_camera_test>)
 add_test(NAME photon_pathtracer_test COMMAND $<TARGET_FILE:photon_pathtracer_test>)
+add_test(NAME photon_volume_test COMMAND $<TARGET_FILE:photon_volume_test>)
 
 add_test(NAME photon_backend_test COMMAND $<TARGET_FILE:photon_backend_test>)
