@@ -4,6 +4,7 @@
 
 #include "photon/pt/bvh/bvh.h"
 #include "photon/pt/geom/triangle_intersect.h"
+#include "photon/pt/math_vec2.h"
 #include "photon/pt/ray.h"
 
 namespace photon::pt {
@@ -13,7 +14,11 @@ struct MeshHit
   f32 t{0.f};
   Vec3 p;
   Vec3 n;
+  Vec3 shading_normal;
+  Vec2 uv{0.f, 0.f};
   u32 prim_id{0};
+  u32 geom_id{0};
+  u32 material_id{0};
   bool hit{false};
 };
 
@@ -54,7 +59,36 @@ KOKKOS_FUNCTION inline MeshHit intersect_mesh_bvh(const TriangleMesh &mesh, cons
         if (dot(nn, ray.dir) > 0.f)
           nn = nn * -1.f;
         best.n = nn;
+        best.shading_normal = nn;
+        best.uv = Vec2{0.f, 0.f};
         best.prim_id = prim_id;
+        best.geom_id = 0;
+        best.material_id = 0;
+
+        const f32 w0 = 1.f - h.u - h.v;
+        const f32 w1 = h.u;
+        const f32 w2 = h.v;
+
+        if (mesh.has_normals()) {
+          const Vec3 n0 = mesh.normals(i0);
+          const Vec3 n1 = mesh.normals(i1);
+          const Vec3 n2 = mesh.normals(i2);
+          best.shading_normal = normalize(n0 * w0 + n1 * w1 + n2 * w2);
+          if (dot(best.shading_normal, nn) < 0.f)
+            best.shading_normal = best.shading_normal * -1.f;
+        }
+
+        if (mesh.has_texcoords()) {
+          const Vec2 uv0 = mesh.texcoords(i0);
+          const Vec2 uv1 = mesh.texcoords(i1);
+          const Vec2 uv2 = mesh.texcoords(i2);
+          best.uv = Vec2{uv0.x * w0 + uv1.x * w1 + uv2.x * w2, uv0.y * w0 + uv1.y * w1 + uv2.y * w2};
+        }
+
+        if (mesh.has_material_ids()) {
+          best.material_id = mesh.material_ids(prim_id);
+        }
+
         best.hit = true;
       }
     } else {
