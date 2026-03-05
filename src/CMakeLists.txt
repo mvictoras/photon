@@ -42,6 +42,7 @@ target_sources(anari_library_photon
     ${PROJECT_SOURCE_DIR}/include/photon/pt/geom/triangle_intersect.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/geom/triangle_mesh.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/material.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/disney_bsdf.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/math.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/math_aabb.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/math_vec2.h
