@@ -139,14 +139,58 @@ ANARIWorld PhotonDevice::newWorld() { return (ANARIWorld)alloc_handle(ANARI_WORL
 ANARIRenderer PhotonDevice::newRenderer(const char *) { return (ANARIRenderer)alloc_handle(ANARI_RENDERER); }
 ANARIFrame PhotonDevice::newFrame() { return (ANARIFrame)alloc_handle(ANARI_FRAME); }
 
-ANARILight PhotonDevice::newLight(const char *) { return nullptr; }
-ANARICamera PhotonDevice::newCamera(const char *) { return nullptr; }
+ANARILight PhotonDevice::newLight(const char *type)
+{
+  const uintptr_t h = alloc_handle(ANARI_LIGHT);
+  auto *o = get((ANARIObject)h);
+  if (o && type) {
+    const size_t n = std::strlen(type) + 1;
+    o->params["subtype"] = std::vector<std::byte>(n);
+    std::memcpy(o->params["subtype"].data(), type, n);
+  }
+  return (ANARILight)h;
+}
+
+ANARICamera PhotonDevice::newCamera(const char *type)
+{
+  const uintptr_t h = alloc_handle(ANARI_CAMERA);
+  auto *o = get((ANARIObject)h);
+  if (o && type) {
+    const size_t n = std::strlen(type) + 1;
+    o->params["subtype"] = std::vector<std::byte>(n);
+    std::memcpy(o->params["subtype"].data(), type, n);
+  }
+  return (ANARICamera)h;
+}
 ANARISpatialField PhotonDevice::newSpatialField(const char *) { return nullptr; }
 ANARIVolume PhotonDevice::newVolume(const char *) { return nullptr; }
-ANARIMaterial PhotonDevice::newMaterial(const char *) { return nullptr; }
+ANARIMaterial PhotonDevice::newMaterial(const char *type)
+{
+  const uintptr_t h = alloc_handle(ANARI_MATERIAL);
+  auto *o = get((ANARIObject)h);
+  if (o && type) {
+    const size_t n = std::strlen(type) + 1;
+    o->params["subtype"] = std::vector<std::byte>(n);
+    std::memcpy(o->params["subtype"].data(), type, n);
+  }
+  return (ANARIMaterial)h;
+}
+
 ANARISampler PhotonDevice::newSampler(const char *) { return nullptr; }
-ANARIGroup PhotonDevice::newGroup() { return nullptr; }
-ANARIInstance PhotonDevice::newInstance(const char *) { return nullptr; }
+
+ANARIGroup PhotonDevice::newGroup() { return (ANARIGroup)alloc_handle(ANARI_GROUP); }
+
+ANARIInstance PhotonDevice::newInstance(const char *type)
+{
+  const uintptr_t h = alloc_handle(ANARI_INSTANCE);
+  auto *o = get((ANARIObject)h);
+  if (o && type) {
+    const size_t n = std::strlen(type) + 1;
+    o->params["subtype"] = std::vector<std::byte>(n);
+    std::memcpy(o->params["subtype"].data(), type, n);
+  }
+  return (ANARIInstance)h;
+}
 
 const char **PhotonDevice::getObjectSubtypes(ANARIDataType)
 {
@@ -253,7 +297,7 @@ void *PhotonDevice::mapParameterArray3D(
 
 void PhotonDevice::unmapParameterArray(ANARIObject, const char *) {}
 
-const void *PhotonDevice::frameBufferMap(ANARIFrame fb, const char *, uint32_t *w, uint32_t *h, ANARIDataType *t)
+const void *PhotonDevice::frameBufferMap(ANARIFrame fb, const char *channel, uint32_t *w, uint32_t *h, ANARIDataType *t)
 {
   auto *o = get((ANARIObject)fb);
   if (!o) {
@@ -273,15 +317,42 @@ const void *PhotonDevice::frameBufferMap(ANARIFrame fb, const char *, uint32_t *
 
   m_fb_w = size[0];
   m_fb_h = size[1];
-  m_fb_bytes.resize(size_t(m_fb_w) * size_t(m_fb_h) * 4 * sizeof(float));
 
   if (w)
     *w = m_fb_w;
   if (h)
     *h = m_fb_h;
+
+  const char *chan = channel ? channel : "color";
+
+  if (std::strcmp(chan, "color") == 0) {
+    if (t)
+      *t = ANARI_FLOAT32_VEC4;
+    m_fb_bytes.resize(size_t(m_fb_w) * size_t(m_fb_h) * 4 * sizeof(float));
+    return m_fb_bytes.data();
+  }
+
+  if (std::strcmp(chan, "depth") == 0) {
+    if (t)
+      *t = ANARI_FLOAT32;
+    return m_channel_depth.data();
+  }
+
+  if (std::strcmp(chan, "normal") == 0) {
+    if (t)
+      *t = ANARI_FLOAT32_VEC3;
+    return m_channel_normal.data();
+  }
+
+  if (std::strcmp(chan, "albedo") == 0) {
+    if (t)
+      *t = ANARI_FLOAT32_VEC3;
+    return m_channel_albedo.data();
+  }
+
   if (t)
-    *t = ANARI_FLOAT32_VEC4;
-  return m_fb_bytes.data();
+    *t = ANARI_UNKNOWN;
+  return nullptr;
 }
 
 void PhotonDevice::frameBufferUnmap(ANARIFrame, const char *) {}
@@ -311,6 +382,8 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
   auto scene_opt = build_scene_from_anari((ANARIWorld)world_h, *this);
   photon::pt::Scene scene = scene_opt ? *scene_opt : photon::pt::SceneBuilder::make_two_quads();
 
+  photon::pt::Camera cam = build_camera_from_anari(fb, *this);
+
   auto backend = std::make_unique<photon::pt::KokkosBackend>();
   backend->build_accel(scene);
 
@@ -319,20 +392,48 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
   pt.params.height = m_fb_h;
   pt.params.samples_per_pixel = 16;
   pt.params.max_depth = 5;
+  pt.camera = cam;
   pt.set_scene(scene);
   pt.set_backend(std::move(backend));
 
   auto result = pt.render();
-  auto host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.color);
+
+  auto color_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.color);
+  auto depth_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.depth);
+  auto normal_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.normal);
+  auto albedo_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.albedo);
+
+  m_channel_color.resize(size_t(m_fb_w) * size_t(m_fb_h) * 4);
+  m_channel_depth.resize(size_t(m_fb_w) * size_t(m_fb_h));
+  m_channel_normal.resize(size_t(m_fb_w) * size_t(m_fb_h) * 3);
+  m_channel_albedo.resize(size_t(m_fb_w) * size_t(m_fb_h) * 3);
 
   for (uint32_t y = 0; y < m_fb_h; ++y) {
     for (uint32_t x = 0; x < m_fb_w; ++x) {
       const size_t idx = size_t(y) * size_t(m_fb_w) + x;
-      const auto c = photon::pt::clamp01(host(y, x));
+
+      const auto c = photon::pt::clamp01(color_host(y, x));
       out[4 * idx + 0] = c.x;
       out[4 * idx + 1] = c.y;
       out[4 * idx + 2] = c.z;
       out[4 * idx + 3] = 1.f;
+
+      m_channel_color[4 * idx + 0] = c.x;
+      m_channel_color[4 * idx + 1] = c.y;
+      m_channel_color[4 * idx + 2] = c.z;
+      m_channel_color[4 * idx + 3] = 1.f;
+
+      m_channel_depth[idx] = depth_host(y, x);
+
+      const auto n = normal_host(y, x);
+      m_channel_normal[3 * idx + 0] = n.x;
+      m_channel_normal[3 * idx + 1] = n.y;
+      m_channel_normal[3 * idx + 2] = n.z;
+
+      const auto a = albedo_host(y, x);
+      m_channel_albedo[3 * idx + 0] = a.x;
+      m_channel_albedo[3 * idx + 1] = a.y;
+      m_channel_albedo[3 * idx + 2] = a.z;
     }
   }
 }
