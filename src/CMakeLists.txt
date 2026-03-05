@@ -32,6 +32,9 @@ target_sources(anari_library_photon
     photon/pt/scene/builder.cpp
     photon/pt/environment_map.cpp
     photon/pt/backend/kokkos_backend.cpp
+    photon/pt/backend/embree_backend.cpp
+    photon/pt/backend/optix_backend.cpp
+    photon/pt/backend/hiprt_backend.cpp
     photon/pt/backend/backend_factory.cpp
   PUBLIC
     ${PROJECT_SOURCE_DIR}/include/photon/pathtracer/version.h
@@ -63,5 +66,8 @@ target_sources(anari_library_photon
     ${PROJECT_SOURCE_DIR}/include/photon/pt/sphere.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/backend/ray_backend.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/backend/kokkos_backend.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/backend/embree_backend.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/backend/optix_backend.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/backend/hiprt_backend.h
  )
 
