@@ -30,6 +30,7 @@ target_sources(anari_library_photon
     photon/pt/bvh/bvh.cpp
     photon/pt/scene.cpp
     photon/pt/scene/builder.cpp
+    photon/pt/environment_map.cpp
   PUBLIC
     ${PROJECT_SOURCE_DIR}/include/photon/pathtracer/version.h
     ${PROJECT_SOURCE_DIR}/include/photon/anari/device.h
@@ -52,6 +53,8 @@ target_sources(anari_library_photon
     ${PROJECT_SOURCE_DIR}/include/photon/pt/ray.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/rng.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/sampling.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/light.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/environment_map.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/scene.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/scene/builder.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/sphere.h
