@@ -303,236 +303,32 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
 
   auto *out = reinterpret_cast<float *>(m_fb_bytes.data());
 
-  photon::pt::PathTracer pt;
-  pt.params.width = m_fb_w;
-  pt.params.height = m_fb_h;
-  pt.params.samples_per_pixel = 16;
-  pt.params.max_depth = 4;
-
-  std::optional<photon::pt::Scene> scene;
-
   uintptr_t world_h = 0;
   auto wit = o->params.find("world");
   if (wit != o->params.end() && wit->second.size() == sizeof(uintptr_t))
     std::memcpy(&world_h, wit->second.data(), sizeof(uintptr_t));
 
-  if (world_h == 0) {
-    report((ANARIObject)fb, ANARI_FRAME, ANARI_SEVERITY_WARNING, ANARI_STATUS_NO_ERROR,
-        "missing required parameter 'world' on frame");
-  } else {
-    auto *wo = get((ANARIObject)world_h);
-    if (wo) {
-      uintptr_t surfaces_arr = 0;
-      auto sit = wo->params.find("surface");
-      if (sit != wo->params.end() && sit->second.size() == sizeof(uintptr_t))
-        std::memcpy(&surfaces_arr, sit->second.data(), sizeof(uintptr_t));
-
-      auto *sa = get((ANARIObject)surfaces_arr);
-      if (sa && sa->object_type == ANARI_ARRAY1D && sa->memory && sa->array_num_items1 > 0) {
-        const auto *surfaces = reinterpret_cast<const uintptr_t *>(sa->memory);
-
-        const uint64_t nsurf = sa->array_num_items1;
-
-        uint64_t total_pos = 0;
-        uint64_t total_idx = 0;
-        uint64_t total_prims = 0;
-
-        for (uint64_t si = 0; si < nsurf; ++si) {
-          auto *so = get((ANARIObject)surfaces[si]);
-          if (!so)
-            continue;
-
-          uintptr_t geom_h = 0;
-          auto git = so->params.find("geometry");
-          if (git != so->params.end() && git->second.size() == sizeof(uintptr_t))
-            std::memcpy(&geom_h, git->second.data(), sizeof(uintptr_t));
-
-          auto *go = get((ANARIObject)geom_h);
-          if (!go)
-            continue;
-
-          const char *subtype = nullptr;
-          auto st = go->params.find("subtype");
-          if (st != go->params.end() && !st->second.empty())
-            subtype = reinterpret_cast<const char *>(st->second.data());
-
-          uintptr_t vtx_h = 0;
-          auto vit = go->params.find("vertex.position");
-          if (vit != go->params.end() && vit->second.size() == sizeof(uintptr_t))
-            std::memcpy(&vtx_h, vit->second.data(), sizeof(uintptr_t));
-
-          auto *va = get((ANARIObject)vtx_h);
-          if (!va || !va->memory)
-            continue;
-
-          const uint64_t nv = va->array_num_items1;
-
-          uintptr_t idx_hnd = 0;
-          auto iit = go->params.find("primitive.index");
-          if (iit != go->params.end() && iit->second.size() == sizeof(uintptr_t))
-            std::memcpy(&idx_hnd, iit->second.data(), sizeof(uintptr_t));
-          auto *ia = get((ANARIObject)idx_hnd);
-
-          uint64_t nprim = 0;
-          if (ia && ia->memory)
-            nprim = ia->array_num_items1;
-          else
-            nprim = (subtype && std::strcmp(subtype, "quad") == 0) ? (nv / 4) : (nv / 3);
-
-          if (subtype && std::strcmp(subtype, "quad") == 0) {
-            total_pos += 4 * nprim;
-            total_idx += 6 * nprim;
-            total_prims += 2 * nprim;
-          } else {
-            total_pos += 3 * nprim;
-            total_idx += 3 * nprim;
-            total_prims += 1 * nprim;
-          }
-        }
-
-        photon::pt::TriangleMesh mesh;
-        mesh.positions = Kokkos::View<photon::pt::Vec3 *>("pos", total_pos);
-        mesh.indices = Kokkos::View<photon::pt::u32 *>("idx", total_idx);
-        mesh.albedo_per_prim = Kokkos::View<photon::pt::Vec3 *>("alb", total_prims);
-
-        auto pos_h = Kokkos::create_mirror_view(mesh.positions);
-        auto idx_h = Kokkos::create_mirror_view(mesh.indices);
-        auto alb_h = Kokkos::create_mirror_view(mesh.albedo_per_prim);
-
-        uint64_t pos_off = 0;
-        uint64_t idx_off = 0;
-        uint64_t prim_off = 0;
-
-        for (uint64_t si = 0; si < nsurf; ++si) {
-          auto *so = get((ANARIObject)surfaces[si]);
-          if (!so)
-            continue;
-
-          uintptr_t geom_h = 0;
-          auto git = so->params.find("geometry");
-          if (git != so->params.end() && git->second.size() == sizeof(uintptr_t))
-            std::memcpy(&geom_h, git->second.data(), sizeof(uintptr_t));
-
-          auto *go = get((ANARIObject)geom_h);
-          if (!go)
-            continue;
-
-          const char *subtype = nullptr;
-          auto st = go->params.find("subtype");
-          if (st != go->params.end() && !st->second.empty())
-            subtype = reinterpret_cast<const char *>(st->second.data());
-
-          uintptr_t vtx_h = 0;
-          auto vit = go->params.find("vertex.position");
-          if (vit != go->params.end() && vit->second.size() == sizeof(uintptr_t))
-            std::memcpy(&vtx_h, vit->second.data(), sizeof(uintptr_t));
-
-          auto *va = get((ANARIObject)vtx_h);
-          if (!va || !va->memory)
-            continue;
-
-          const uint64_t nv = va->array_num_items1;
-          const float *v = reinterpret_cast<const float *>(va->memory);
-
-          uintptr_t idx_hnd = 0;
-          auto iit = go->params.find("primitive.index");
-          if (iit != go->params.end() && iit->second.size() == sizeof(uintptr_t))
-            std::memcpy(&idx_hnd, iit->second.data(), sizeof(uintptr_t));
-          auto *ia = get((ANARIObject)idx_hnd);
-
-          const uint64_t nprim = (ia && ia->memory) ? ia->array_num_items1
-                                                    : ((subtype && std::strcmp(subtype, "quad") == 0) ? (nv / 4)
-                                                                                                       : (nv / 3));
-
-          for (uint64_t pi = 0; pi < nprim; ++pi) {
-            if (subtype && std::strcmp(subtype, "quad") == 0) {
-              const float *vv = v + 12 * pi;
-              pos_h(pos_off + 0) = {vv[0], vv[1], vv[2]};
-              pos_h(pos_off + 1) = {vv[3], vv[4], vv[5]};
-              pos_h(pos_off + 2) = {vv[6], vv[7], vv[8]};
-              pos_h(pos_off + 3) = {vv[9], vv[10], vv[11]};
-
-              uint32_t q[4] = {0, 1, 2, 3};
-              if (ia && ia->memory) {
-                const uint32_t *qi = reinterpret_cast<const uint32_t *>(ia->memory) + 4 * pi;
-                q[0] = qi[0];
-                q[1] = qi[1];
-                q[2] = qi[2];
-                q[3] = qi[3];
-              }
-
-              idx_h(idx_off + 0) = photon::pt::u32(pos_off + q[0]);
-              idx_h(idx_off + 1) = photon::pt::u32(pos_off + q[1]);
-              idx_h(idx_off + 2) = photon::pt::u32(pos_off + q[2]);
-              idx_h(idx_off + 3) = photon::pt::u32(pos_off + q[0]);
-              idx_h(idx_off + 4) = photon::pt::u32(pos_off + q[2]);
-              idx_h(idx_off + 5) = photon::pt::u32(pos_off + q[3]);
-
-              alb_h(prim_off + 0) = {0.0f, 1.0f, 0.0f};
-              alb_h(prim_off + 1) = {0.0f, 1.0f, 0.0f};
-
-              pos_off += 4;
-              idx_off += 6;
-              prim_off += 2;
-            } else {
-              const float *vv = v + 9 * pi;
-              pos_h(pos_off + 0) = {vv[0], vv[1], vv[2]};
-              pos_h(pos_off + 1) = {vv[3], vv[4], vv[5]};
-              pos_h(pos_off + 2) = {vv[6], vv[7], vv[8]};
-
-              uint32_t t[3] = {0, 1, 2};
-              if (ia && ia->memory) {
-                const uint32_t *ti = reinterpret_cast<const uint32_t *>(ia->memory) + 3 * pi;
-                t[0] = ti[0];
-                t[1] = ti[1];
-                t[2] = ti[2];
-              }
-
-              idx_h(idx_off + 0) = photon::pt::u32(pos_off + t[0]);
-              idx_h(idx_off + 1) = photon::pt::u32(pos_off + t[1]);
-              idx_h(idx_off + 2) = photon::pt::u32(pos_off + t[2]);
-
-              alb_h(prim_off) = {1.0f, 0.0f, 0.0f};
-
-              pos_off += 3;
-              idx_off += 3;
-              prim_off += 1;
-            }
-          }
-        }
-
-        Kokkos::deep_copy(mesh.positions, pos_h);
-        Kokkos::deep_copy(mesh.indices, idx_h);
-        Kokkos::deep_copy(mesh.albedo_per_prim, alb_h);
-
-        photon::pt::Scene s;
-        s.mesh = mesh;
-        s.bvh = photon::pt::Bvh::build_cpu(mesh);
-        scene = std::move(s);
-      }
-    }
-  }
-
-  photon::pt::Scene pt_scene;
-  if (scene)
-    pt_scene = std::move(*scene);
-  else
-    pt_scene = photon::pt::SceneBuilder::make_two_quads();
+  auto scene_opt = build_scene_from_anari((ANARIWorld)world_h, *this);
+  photon::pt::Scene scene = scene_opt ? *scene_opt : photon::pt::SceneBuilder::make_two_quads();
 
   auto backend = std::make_unique<photon::pt::KokkosBackend>();
-  backend->build_accel(pt_scene);
+  backend->build_accel(scene);
 
-  pt.set_scene(pt_scene);
+  photon::pt::PathTracer pt;
+  pt.params.width = m_fb_w;
+  pt.params.height = m_fb_h;
+  pt.params.samples_per_pixel = 16;
+  pt.params.max_depth = 5;
+  pt.set_scene(scene);
   pt.set_backend(std::move(backend));
 
   auto result = pt.render();
   auto host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.color);
 
-
   for (uint32_t y = 0; y < m_fb_h; ++y) {
     for (uint32_t x = 0; x < m_fb_w; ++x) {
       const size_t idx = size_t(y) * size_t(m_fb_w) + x;
-      auto c = photon::pt::clamp01(host(y, x));
+      const auto c = photon::pt::clamp01(host(y, x));
       out[4 * idx + 0] = c.x;
       out[4 * idx + 1] = c.y;
       out[4 * idx + 2] = c.z;
