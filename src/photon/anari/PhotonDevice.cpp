@@ -247,12 +247,148 @@ const void *PhotonDevice::getParameterInfo(
   return nullptr;
 }
 
-int PhotonDevice::getProperty(ANARIObject, const char *name, ANARIDataType type, void *mem, uint64_t size, ANARIWaitMask)
+int PhotonDevice::getProperty(ANARIObject object, const char *name, ANARIDataType type, void *mem, uint64_t size, ANARIWaitMask)
 {
   if (name && std::strcmp(name, "version") == 0 && type == ANARI_INT32 && size >= sizeof(int)) {
     *(int *)mem = 1;
     return 1;
   }
+
+  if (name && std::strcmp(name, "bounds") == 0 && size >= 6 * sizeof(float)) {
+    auto *wo = get(object);
+    if (!wo || wo->object_type != ANARI_WORLD)
+      return 0;
+
+    float lo[3] = {1e30f, 1e30f, 1e30f};
+    float hi[3] = {-1e30f, -1e30f, -1e30f};
+    bool found = false;
+
+    auto expand_vertex = [&](const float *p) {
+      for (int c = 0; c < 3; ++c) {
+        if (p[c] < lo[c]) lo[c] = p[c];
+        if (p[c] > hi[c]) hi[c] = p[c];
+      }
+      found = true;
+    };
+
+    auto scan_surface_positions = [&](uintptr_t surf_h) {
+      auto *so = get((ANARIObject)surf_h);
+      if (!so || so->object_type != ANARI_SURFACE)
+        return;
+      uintptr_t geom_h = 0;
+      auto git = so->params.find("geometry");
+      if (git != so->params.end() && git->second.size() == sizeof(uintptr_t))
+        std::memcpy(&geom_h, git->second.data(), sizeof(uintptr_t));
+      if (geom_h == 0)
+        return;
+      auto *go = get((ANARIObject)geom_h);
+      if (!go || go->object_type != ANARI_GEOMETRY)
+        return;
+      uintptr_t pos_h = 0;
+      auto pit = go->params.find("vertex.position");
+      if (pit != go->params.end() && pit->second.size() == sizeof(uintptr_t))
+        std::memcpy(&pos_h, pit->second.data(), sizeof(uintptr_t));
+      if (pos_h == 0)
+        return;
+      auto *pa = get((ANARIObject)pos_h);
+      if (!pa || pa->object_type != ANARI_ARRAY1D || !pa->memory || pa->array_element_type != ANARI_FLOAT32_VEC3)
+        return;
+      const float *verts = reinterpret_cast<const float *>(pa->memory);
+      for (uint64_t i = 0; i < pa->array_num_items1; ++i)
+        expand_vertex(verts + 3 * i);
+    };
+
+    auto scan_array = [&](const char *param_name, ANARIDataType /*elem_type*/, auto handler) {
+      uintptr_t arr_h = 0;
+      auto ait = wo->params.find(param_name);
+      if (ait == wo->params.end() || ait->second.size() != sizeof(uintptr_t))
+        return;
+      std::memcpy(&arr_h, ait->second.data(), sizeof(uintptr_t));
+      if (arr_h == 0)
+        return;
+      auto *arr = get((ANARIObject)arr_h);
+      if (!arr || arr->object_type != ANARI_ARRAY1D || !arr->memory)
+        return;
+      const auto *handles = reinterpret_cast<const uintptr_t *>(arr->memory);
+      for (uint64_t i = 0; i < arr->array_num_items1; ++i)
+        handler(handles[i]);
+    };
+
+    scan_array("surface", ANARI_SURFACE, scan_surface_positions);
+
+    scan_array("instance", ANARI_INSTANCE, [&](uintptr_t inst_h) {
+      auto *inst = get((ANARIObject)inst_h);
+      if (!inst || inst->object_type != ANARI_INSTANCE)
+        return;
+      uintptr_t group_h = 0;
+      auto git = inst->params.find("group");
+      if (git != inst->params.end() && git->second.size() == sizeof(uintptr_t))
+        std::memcpy(&group_h, git->second.data(), sizeof(uintptr_t));
+      if (group_h == 0)
+        return;
+      auto *grp = get((ANARIObject)group_h);
+      if (!grp || grp->object_type != ANARI_GROUP)
+        return;
+      uintptr_t gsarr_h = 0;
+      auto sit = grp->params.find("surface");
+      if (sit != grp->params.end() && sit->second.size() == sizeof(uintptr_t))
+        std::memcpy(&gsarr_h, sit->second.data(), sizeof(uintptr_t));
+      if (gsarr_h == 0)
+        return;
+      auto *gsa = get((ANARIObject)gsarr_h);
+      if (!gsa || gsa->object_type != ANARI_ARRAY1D || !gsa->memory)
+        return;
+
+      float xfm_raw[16];
+      bool has_xfm = false;
+      auto xit = inst->params.find("transform");
+      if (xit != inst->params.end() && xit->second.size() == 16 * sizeof(float)) {
+        std::memcpy(xfm_raw, xit->second.data(), sizeof(xfm_raw));
+        has_xfm = true;
+      }
+
+      const auto *shandles = reinterpret_cast<const uintptr_t *>(gsa->memory);
+      for (uint64_t si = 0; si < gsa->array_num_items1; ++si) {
+        auto *sso = get((ANARIObject)shandles[si]);
+        if (!sso || sso->object_type != ANARI_SURFACE)
+          continue;
+        uintptr_t gg = 0;
+        auto ggi = sso->params.find("geometry");
+        if (ggi != sso->params.end() && ggi->second.size() == sizeof(uintptr_t))
+          std::memcpy(&gg, ggi->second.data(), sizeof(uintptr_t));
+        if (gg == 0) continue;
+        auto *ggo = get((ANARIObject)gg);
+        if (!ggo || ggo->object_type != ANARI_GEOMETRY) continue;
+        uintptr_t pp = 0;
+        auto ppi = ggo->params.find("vertex.position");
+        if (ppi != ggo->params.end() && ppi->second.size() == sizeof(uintptr_t))
+          std::memcpy(&pp, ppi->second.data(), sizeof(uintptr_t));
+        if (pp == 0) continue;
+        auto *ppa = get((ANARIObject)pp);
+        if (!ppa || ppa->object_type != ANARI_ARRAY1D || !ppa->memory || ppa->array_element_type != ANARI_FLOAT32_VEC3) continue;
+        const float *verts = reinterpret_cast<const float *>(ppa->memory);
+        for (uint64_t vi = 0; vi < ppa->array_num_items1; ++vi) {
+          float p[3] = {verts[3 * vi], verts[3 * vi + 1], verts[3 * vi + 2]};
+          if (has_xfm) {
+            float x = xfm_raw[0] * p[0] + xfm_raw[4] * p[1] + xfm_raw[8] * p[2] + xfm_raw[12];
+            float y = xfm_raw[1] * p[0] + xfm_raw[5] * p[1] + xfm_raw[9] * p[2] + xfm_raw[13];
+            float z = xfm_raw[2] * p[0] + xfm_raw[6] * p[1] + xfm_raw[10] * p[2] + xfm_raw[14];
+            p[0] = x; p[1] = y; p[2] = z;
+          }
+          expand_vertex(p);
+        }
+      }
+    });
+
+    if (!found)
+      return 0;
+
+    float *out = reinterpret_cast<float *>(mem);
+    out[0] = lo[0]; out[1] = lo[1]; out[2] = lo[2];
+    out[3] = hi[0]; out[4] = hi[1]; out[5] = hi[2];
+    return 1;
+  }
+
   return 0;
 }
 
@@ -346,23 +482,63 @@ void PhotonDevice::retain(ANARIObject object)
     o->refcount += 1;
 }
 
-void *PhotonDevice::mapParameterArray1D(ANARIObject, const char *, ANARIDataType, uint64_t, uint64_t *)
+void *PhotonDevice::mapParameterArray1D(
+    ANARIObject object, const char *name, ANARIDataType type, uint64_t n1, uint64_t *stride)
 {
-  return nullptr;
+  auto arr = newArray1D(nullptr, nullptr, nullptr, type, n1);
+  setParameter(object, name, ANARI_ARRAY1D, &arr);
+  if (stride)
+    *stride = sizeof_anari(type);
+  release(arr);
+  return mapArray(arr);
 }
 
-void *PhotonDevice::mapParameterArray2D(ANARIObject, const char *, ANARIDataType, uint64_t, uint64_t, uint64_t *)
+void *PhotonDevice::mapParameterArray2D(
+    ANARIObject object, const char *name, ANARIDataType type, uint64_t n1, uint64_t n2, uint64_t *stride)
 {
-  return nullptr;
+  auto arr = newArray2D(nullptr, nullptr, nullptr, type, n1, n2);
+  setParameter(object, name, ANARI_ARRAY2D, &arr);
+  if (stride)
+    *stride = sizeof_anari(type);
+  release(arr);
+  return mapArray(arr);
 }
 
 void *PhotonDevice::mapParameterArray3D(
-    ANARIObject, const char *, ANARIDataType, uint64_t, uint64_t, uint64_t, uint64_t *)
+    ANARIObject object, const char *name, ANARIDataType type, uint64_t n1, uint64_t n2, uint64_t n3, uint64_t *stride)
 {
-  return nullptr;
+  auto arr = newArray3D(nullptr, nullptr, nullptr, type, n1, n2, n3);
+  setParameter(object, name, ANARI_ARRAY3D, &arr);
+  if (stride)
+    *stride = sizeof_anari(type);
+  release(arr);
+  return mapArray(arr);
 }
 
-void PhotonDevice::unmapParameterArray(ANARIObject, const char *) {}
+void PhotonDevice::unmapParameterArray(ANARIObject object, const char *name)
+{
+  auto *o = get(object);
+  if (!o || !name)
+    return;
+
+  auto it = o->params.find(name);
+  if (it == o->params.end() || it->second.size() != sizeof(uintptr_t))
+    return;
+
+  uintptr_t arr_h = 0;
+  std::memcpy(&arr_h, it->second.data(), sizeof(uintptr_t));
+  auto *arr = get((ANARIObject)arr_h);
+  if (!arr || !arr->memory)
+    return;
+
+  if (is_handle_type(arr->array_element_type)) {
+    const auto *handles = reinterpret_cast<const uintptr_t *>(arr->memory);
+    for (uint64_t i = 0; i < arr->array_num_items1; ++i) {
+      if (handles[i] != 0)
+        retain((ANARIObject)handles[i]);
+    }
+  }
+}
 
 const void *PhotonDevice::frameBufferMap(ANARIFrame fb, const char *channel, uint32_t *w, uint32_t *h, ANARIDataType *t)
 {
@@ -446,6 +622,36 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
   if (wit != o->params.end() && wit->second.size() == sizeof(uintptr_t))
     std::memcpy(&world_h, wit->second.data(), sizeof(uintptr_t));
 
+  uintptr_t renderer_h = 0;
+  auto rit = o->params.find("renderer");
+  if (rit != o->params.end() && rit->second.size() == sizeof(uintptr_t))
+    std::memcpy(&renderer_h, rit->second.data(), sizeof(uintptr_t));
+
+  uint32_t spp = 16;
+  uint32_t max_depth = 5;
+
+  if (renderer_h != 0) {
+    auto *ro = get((ANARIObject)renderer_h);
+    if (ro) {
+      auto pit = ro->params.find("samples_per_pixel");
+      if (pit != ro->params.end() && pit->second.size() == sizeof(uint32_t))
+        std::memcpy(&spp, pit->second.data(), sizeof(uint32_t));
+      pit = ro->params.find("spp");
+      if (pit != ro->params.end() && pit->second.size() == sizeof(uint32_t))
+        std::memcpy(&spp, pit->second.data(), sizeof(uint32_t));
+      pit = ro->params.find("pixelSamples");
+      if (pit != ro->params.end() && pit->second.size() == sizeof(uint32_t))
+        std::memcpy(&spp, pit->second.data(), sizeof(uint32_t));
+
+      pit = ro->params.find("max_depth");
+      if (pit != ro->params.end() && pit->second.size() == sizeof(uint32_t))
+        std::memcpy(&max_depth, pit->second.data(), sizeof(uint32_t));
+      pit = ro->params.find("maxDepth");
+      if (pit != ro->params.end() && pit->second.size() == sizeof(uint32_t))
+        std::memcpy(&max_depth, pit->second.data(), sizeof(uint32_t));
+    }
+  }
+
   auto scene_opt = build_scene_from_anari((ANARIWorld)world_h, *this);
   photon::pt::Scene scene = scene_opt ? *scene_opt : photon::pt::SceneBuilder::make_two_quads();
 
@@ -457,8 +663,8 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
   photon::pt::PathTracer pt;
   pt.params.width = m_fb_w;
   pt.params.height = m_fb_h;
-  pt.params.samples_per_pixel = 16;
-  pt.params.max_depth = 5;
+  pt.params.samples_per_pixel = spp;
+  pt.params.max_depth = max_depth;
   pt.camera = cam;
   pt.set_scene(scene);
   pt.set_backend(std::move(backend));
