@@ -10,3 +10,7 @@ build/
 compile_commands.json
 .worktrees/
 .worktrees
+*.ppm
+*.png
+*.exr
+*.hdr
