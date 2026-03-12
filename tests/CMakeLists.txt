@@ -13,6 +13,7 @@ add_executable(photon_camera_test camera_test.cpp)
 add_executable(photon_pathtracer_test pathtracer_test.cpp)
 add_executable(photon_integration_test integration_test.cpp)
 add_executable(photon_volume_test volume_test.cpp)
+add_executable(photon_anari_import_test anari_import_test.cpp)
 
 target_link_libraries(photon_version_test PRIVATE anari_library_photon)
 
@@ -31,6 +32,9 @@ target_link_libraries(photon_camera_test PRIVATE anari_library_photon)
 target_link_libraries(photon_pathtracer_test PRIVATE anari_library_photon)
 target_link_libraries(photon_integration_test PRIVATE anari_library_photon)
 target_link_libraries(photon_volume_test PRIVATE anari_library_photon)
+target_link_libraries(photon_anari_import_test PRIVATE anari_library_photon anari)
+
+target_include_directories(photon_anari_import_test PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
 
 add_test(NAME photon_version_test COMMAND $<TARGET_FILE:photon_version_test>)
 add_test(NAME photon_pt_smoke_test COMMAND $<TARGET_FILE:photon_pt_smoke_test>)
@@ -46,5 +50,7 @@ add_test(NAME photon_camera_test COMMAND $<TARGET_FILE:photon_camera_test>)
 add_test(NAME photon_pathtracer_test COMMAND $<TARGET_FILE:photon_pathtracer_test>)
 add_test(NAME photon_integration_test COMMAND $<TARGET_FILE:photon_integration_test>)
 add_test(NAME photon_volume_test COMMAND $<TARGET_FILE:photon_volume_test>)
+
+add_test(NAME photon_anari_import_test COMMAND $<TARGET_FILE:photon_anari_import_test>)
 
 add_test(NAME photon_backend_test COMMAND $<TARGET_FILE:photon_backend_test>)
