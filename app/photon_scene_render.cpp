@@ -124,10 +124,16 @@ int main(int argc, char **argv)
     anari::setParameter(device, camera, "aspect", float(args.width) / float(args.height));
     anari::commitParameters(device, camera);
 
+    anari::Renderer renderer = anari::newObject<anari::Renderer>(device, "pathtracer");
+    anari::setParameter(device, renderer, "pixelSamples", args.spp);
+    anari::setParameter(device, renderer, "maxDepth", uint32_t(8));
+    anari::commitParameters(device, renderer);
+
     anari::Frame frame = anari::newObject<anari::Frame>(device);
     anari::setParameter(device, frame, "size", anari::math::uint2(args.width, args.height));
     anari::setParameter(device, frame, "world", world);
     anari::setParameter(device, frame, "camera", camera);
+    anari::setParameter(device, frame, "renderer", renderer);
     anari::commitParameters(device, frame);
 
     anari::render(device, frame);
@@ -142,6 +148,7 @@ int main(int argc, char **argv)
     anari::unmap(device, frame, "color");
 
     anari::release(device, frame);
+    anari::release(device, renderer);
     anari::release(device, camera);
     anari::scenes::release(sceneH);
     anari::release(device, device);

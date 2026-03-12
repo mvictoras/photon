@@ -134,9 +134,13 @@ RenderResult PathTracer::render() const
 
             if (!hr.hit) {
               const Vec3 dir = rays.directions(idx);
-              Vec3 L = eval_sky_gradient(dir);
-              if (env_map.has_value())
+              Vec3 L{0.01f, 0.01f, 0.01f};
+
+              if (env_map.has_value()) {
                 L = env_map.value().evaluate(dir);
+              } else if (light_count == 0) {
+                L = eval_sky_gradient(dir);
+              }
 
               accum(idx) = accum(idx) + throughput(idx) * L;
               active(idx) = 0u;
