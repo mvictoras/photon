@@ -28,26 +28,33 @@ size_t sizeof_anari(ANARIDataType type)
 {
   switch (type) {
   case ANARI_INT32:
-    return 4;
   case ANARI_UINT32:
-    return 4;
   case ANARI_FLOAT32:
     return 4;
   case ANARI_FLOAT32_VEC2:
-    return 8;
-  case ANARI_FLOAT32_VEC3:
-    return 12;
-  case ANARI_FLOAT32_VEC4:
-    return 16;
   case ANARI_UINT32_VEC2:
     return 8;
+  case ANARI_FLOAT32_VEC3:
   case ANARI_UINT32_VEC3:
     return 12;
+  case ANARI_FLOAT32_VEC4:
   case ANARI_UINT32_VEC4:
     return 16;
+  case ANARI_FLOAT32_MAT4:
+    return 64;
   default:
-    return 0;
+    break;
   }
+
+  if (type == ANARI_SURFACE || type == ANARI_GEOMETRY || type == ANARI_ARRAY1D
+      || type == ANARI_ARRAY2D || type == ANARI_ARRAY3D || type == ANARI_WORLD
+      || type == ANARI_FRAME || type == ANARI_RENDERER || type == ANARI_CAMERA
+      || type == ANARI_LIGHT || type == ANARI_MATERIAL || type == ANARI_GROUP
+      || type == ANARI_INSTANCE || type == ANARI_SAMPLER || type == ANARI_VOLUME
+      || type == ANARI_SPATIAL_FIELD || type == ANARI_DEVICE)
+    return sizeof(uintptr_t);
+
+  return 0;
 }
 
 size_t bytes_for(ANARIDataType type, uint64_t n1, uint64_t n2 = 1, uint64_t n3 = 1)
@@ -73,34 +80,63 @@ PhotonDevice::Object *PhotonDevice::get(ANARIObject o)
   return it == m_objects.end() ? nullptr : it->second.get();
 }
 
+static bool is_handle_type(ANARIDataType type)
+{
+  return type == ANARI_SURFACE || type == ANARI_GEOMETRY || type == ANARI_ARRAY1D
+      || type == ANARI_ARRAY2D || type == ANARI_ARRAY3D || type == ANARI_WORLD
+      || type == ANARI_FRAME || type == ANARI_RENDERER || type == ANARI_CAMERA
+      || type == ANARI_LIGHT || type == ANARI_MATERIAL || type == ANARI_GROUP
+      || type == ANARI_INSTANCE || type == ANARI_SAMPLER || type == ANARI_VOLUME
+      || type == ANARI_SPATIAL_FIELD || type == ANARI_DEVICE;
+}
+
 ANARIArray1D PhotonDevice::newArray1D(
-    const void *appMemory, ANARIMemoryDeleter deleter, const void *userData, ANARIDataType type, uint64_t n1)
+    const void *appMemory, ANARIMemoryDeleter, const void *, ANARIDataType type, uint64_t n1)
 {
   const uintptr_t h = alloc_handle(ANARI_ARRAY1D);
   auto *o = get((ANARIObject)h);
   o->array_element_type = type;
   o->array_num_items1 = n1;
-  o->memory = appMemory ? appMemory : (const void *)new char[bytes_for(type, n1)];
-  o->deleter = appMemory ? deleter : owned_memory_deleter;
-  o->userdata = appMemory ? userData : nullptr;
+
+  const size_t nb = bytes_for(type, n1);
+  auto *buf = new char[nb > 0 ? nb : 1];
+  if (appMemory && nb > 0)
+    std::memcpy(buf, appMemory, nb);
+  o->memory = buf;
+  o->deleter = owned_memory_deleter;
+  o->userdata = nullptr;
+
+  if (is_handle_type(type) && appMemory) {
+    const auto *handles = reinterpret_cast<const uintptr_t *>(appMemory);
+    for (uint64_t i = 0; i < n1; ++i) {
+      if (handles[i] != 0)
+        retain((ANARIObject)handles[i]);
+    }
+  }
+
   return (ANARIArray1D)h;
 }
 
 ANARIArray2D PhotonDevice::newArray2D(
-    const void *appMemory, ANARIMemoryDeleter deleter, const void *userData, ANARIDataType type, uint64_t n1, uint64_t n2)
+    const void *appMemory, ANARIMemoryDeleter, const void *, ANARIDataType type, uint64_t n1, uint64_t n2)
 {
   const uintptr_t h = alloc_handle(ANARI_ARRAY2D);
   auto *o = get((ANARIObject)h);
   o->array_element_type = type;
   o->array_num_items1 = n1;
   o->array_num_items2 = n2;
-  o->memory = appMemory ? appMemory : (const void *)new char[bytes_for(type, n1, n2)];
-  o->deleter = appMemory ? deleter : owned_memory_deleter;
-  o->userdata = appMemory ? userData : nullptr;
+
+  const size_t nb = bytes_for(type, n1, n2);
+  auto *buf = new char[nb > 0 ? nb : 1];
+  if (appMemory && nb > 0)
+    std::memcpy(buf, appMemory, nb);
+  o->memory = buf;
+  o->deleter = owned_memory_deleter;
+  o->userdata = nullptr;
   return (ANARIArray2D)h;
 }
 
-ANARIArray3D PhotonDevice::newArray3D(const void *appMemory, ANARIMemoryDeleter deleter, const void *userData,
+ANARIArray3D PhotonDevice::newArray3D(const void *appMemory, ANARIMemoryDeleter, const void *,
     ANARIDataType type, uint64_t n1, uint64_t n2, uint64_t n3)
 {
   const uintptr_t h = alloc_handle(ANARI_ARRAY3D);
@@ -109,9 +145,14 @@ ANARIArray3D PhotonDevice::newArray3D(const void *appMemory, ANARIMemoryDeleter 
   o->array_num_items1 = n1;
   o->array_num_items2 = n2;
   o->array_num_items3 = n3;
-  o->memory = appMemory ? appMemory : (const void *)new char[bytes_for(type, n1, n2, n3)];
-  o->deleter = appMemory ? deleter : owned_memory_deleter;
-  o->userdata = appMemory ? userData : nullptr;
+
+  const size_t nb = bytes_for(type, n1, n2, n3);
+  auto *buf = new char[nb > 0 ? nb : 1];
+  if (appMemory && nb > 0)
+    std::memcpy(buf, appMemory, nb);
+  o->memory = buf;
+  o->deleter = owned_memory_deleter;
+  o->userdata = nullptr;
   return (ANARIArray3D)h;
 }
 
@@ -223,11 +264,37 @@ void PhotonDevice::setParameter(ANARIObject object, const char *name, ANARIDataT
 
   if (type == ANARI_ARRAY1D || type == ANARI_ARRAY2D || type == ANARI_ARRAY3D || type == ANARI_GEOMETRY
       || type == ANARI_SURFACE || type == ANARI_WORLD || type == ANARI_FRAME || type == ANARI_RENDERER
-      || type == ANARI_CAMERA || type == ANARI_LIGHT || type == ANARI_MATERIAL) {
+      || type == ANARI_CAMERA || type == ANARI_LIGHT || type == ANARI_MATERIAL
+      || type == ANARI_GROUP || type == ANARI_INSTANCE || type == ANARI_SAMPLER
+      || type == ANARI_SPATIAL_FIELD || type == ANARI_VOLUME) {
     uintptr_t h = 0;
     std::memcpy(&h, mem, sizeof(uintptr_t));
+
+    if (h != 0)
+      retain((ANARIObject)h);
+
+    auto prev = o->params.find(name);
+    if (prev != o->params.end() && prev->second.size() == sizeof(uintptr_t)) {
+      uintptr_t old_h = 0;
+      std::memcpy(&old_h, prev->second.data(), sizeof(uintptr_t));
+      if (old_h != 0)
+        release((ANARIObject)old_h);
+    }
+
     std::vector<std::byte> bytes(sizeof(uintptr_t));
     std::memcpy(bytes.data(), &h, sizeof(uintptr_t));
+    o->params[name] = std::move(bytes);
+    return;
+  }
+
+  if (type == ANARI_STRING) {
+    const char *s = reinterpret_cast<const char *>(mem);
+    if (!s)
+      return;
+
+    const size_t n = std::strlen(s) + 1;
+    std::vector<std::byte> bytes(n);
+    std::memcpy(bytes.data(), s, n);
     o->params[name] = std::move(bytes);
     return;
   }
