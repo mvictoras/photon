@@ -15,7 +15,13 @@ target_include_directories(anari_library_photon PUBLIC
   ${PROJECT_SOURCE_DIR}/include
 )
 
-target_compile_features(anari_library_photon PUBLIC cxx_std_23)
+target_compile_features(anari_library_photon PUBLIC cxx_std_20)
+
+# If Kokkos CUDA is enabled, use nvcc_wrapper for this target only
+# (leaves ANARI SDK compiled with the host C++ compiler)
+if(Kokkos_ENABLE_CUDA)
+  kokkos_compilation(TARGET anari_library_photon)
+endif()
 
 target_sources(anari_library_photon
   PRIVATE
