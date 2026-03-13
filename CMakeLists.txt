@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
+cmake_policy(SET CMP0079 NEW)
 
 # When CUDA is enabled, Kokkos needs nvcc_wrapper as the CXX compiler globally.
 # However, this conflicts with the ANARI SDK (CUDA's float4 clashes with linalg::float4).
