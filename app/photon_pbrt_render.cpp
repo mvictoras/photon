@@ -103,7 +103,12 @@ int main(int argc, char **argv)
         pbrt_scene.width, pbrt_scene.height, pbrt_scene.spp);
 
     auto t2 = std::chrono::high_resolution_clock::now();
-    auto converted = photon::pbrt::convert_pbrt_scene(pbrt_scene);
+    std::string base_dir;
+    auto last_slash = args.scene_path.find_last_of("/\\");
+    if (last_slash != std::string::npos)
+      base_dir = args.scene_path.substr(0, last_slash + 1);
+
+    auto converted = photon::pbrt::convert_pbrt_scene(pbrt_scene, base_dir);
     auto t3 = std::chrono::high_resolution_clock::now();
     double convert_ms = std::chrono::duration<double, std::milli>(t3 - t2).count();
 

@@ -255,6 +255,8 @@ PbrtScene parse_pbrt_file(const std::string &path)
         auto pv = parse_param(tok);
         if (pv.name == "type" && !pv.strings.empty())
           mat.type = pv.strings[0];
+        else if (pv.name == "reflectance" && pv.type == "texture" && !pv.strings.empty())
+          mat.reflectance_texture = pv.strings[0];
         else if (pv.name == "reflectance" && pv.floats.size() >= 3)
           mat.reflectance = {pv.floats[0], pv.floats[1], pv.floats[2]};
         else if (pv.name == "roughness" && !pv.floats.empty())
@@ -331,17 +333,29 @@ PbrtScene parse_pbrt_file(const std::string &path)
         while (tok.peek().kind == Token::STRING)
           parse_param(tok);
       }
-    } else if (t.text == "Texture" || t.text == "Material" || t.text == "LightSource"
+    } else if (t.text == "Texture") {
+      Token tex_name = tok.next();
+      Token value_type = tok.next();
+      Token class_type = tok.next();
+      PbrtTexture tex;
+      tex.name = tex_name.text;
+      tex.value_type = value_type.text;
+      tex.class_type = class_type.text;
+      while (tok.peek().kind == Token::STRING) {
+        auto pv = parse_param(tok);
+        if (pv.name == "filename" && !pv.strings.empty())
+          tex.filename = pv.strings[0];
+      }
+      scene.textures[tex.name] = tex;
+    } else if (t.text == "Material" || t.text == "LightSource"
                || t.text == "ConcatTransform" || t.text == "ReverseOrientation"
                || t.text == "TransformBegin" || t.text == "TransformEnd"
                || t.text == "ObjectBegin" || t.text == "ObjectEnd"
                || t.text == "ObjectInstance" || t.text == "Include"
                || t.text == "MediumInterface" || t.text == "MakeNamedMedium") {
-      if (t.text == "Texture" || t.text == "Material" || t.text == "LightSource"
+      if (t.text == "Material" || t.text == "LightSource"
           || t.text == "MakeNamedMedium") {
         tok.next();
-        if (t.text == "Texture")
-          tok.next();
       }
       while (tok.peek().kind == Token::STRING)
         parse_param(tok);

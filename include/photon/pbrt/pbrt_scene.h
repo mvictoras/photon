@@ -11,6 +11,17 @@ struct PbrtVec3 {
   float x{0}, y{0}, z{0};
 };
 
+struct PbrtTexture {
+  std::string name;
+  std::string value_type;
+  std::string class_type;
+  std::string filename;
+  std::vector<float> data;
+  int width{0};
+  int height{0};
+  int channels{0};
+};
+
 struct PbrtMaterial {
   std::string name;
   std::string type;
@@ -21,6 +32,7 @@ struct PbrtMaterial {
   float uroughness{-1.f};
   float vroughness{-1.f};
   float eta_scalar{1.5f};
+  std::string reflectance_texture;
 };
 
 struct PbrtTriMesh {
@@ -47,6 +59,7 @@ struct PbrtScene {
   int max_depth{8};
 
   PbrtCamera camera;
+  std::map<std::string, PbrtTexture> textures;
   std::map<std::string, PbrtMaterial> named_materials;
   std::vector<PbrtTriMesh> meshes;
 };
