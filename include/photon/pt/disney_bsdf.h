@@ -282,7 +282,7 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
   }
 
   if (xi < p_diffuse + p_specular + p_transmission && mat.transmission > 0.f) {
-    if (mat.roughness < 0.001f) {
+    if (mat.roughness < 0.1f) {
       const f32 eta = (dot(wo, shading_n) > 0.f) ? (1.f / mat.ior) : mat.ior;
       const Vec3 wt = refract(-wo, shading_n, eta);
       if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f) {
