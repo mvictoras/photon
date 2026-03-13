@@ -4,8 +4,10 @@
 
 #include <Kokkos_Core.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -15,6 +17,8 @@ namespace {
 struct Args
 {
   std::string scene = "demo/cornell_box";
+  std::string device_lib = "photon";
+  std::string output = "photon_scene_render.ppm";
   uint32_t width = 512;
   uint32_t height = 512;
   uint32_t spp = 32;
@@ -45,6 +49,10 @@ Args parse_args(int argc, char **argv)
       parse_u32(argv[++i], a.height);
     } else if (arg == "--spp" && i + 1 < argc) {
       parse_u32(argv[++i], a.spp);
+    } else if (arg == "--device" && i + 1 < argc) {
+      a.device_lib = argv[++i];
+    } else if (arg == "--output" && i + 1 < argc) {
+      a.output = argv[++i];
     }
   }
   return a;
@@ -88,15 +96,22 @@ int main(int argc, char **argv)
     const std::string category = slash == std::string::npos ? "demo" : args.scene.substr(0, slash);
     const std::string name = slash == std::string::npos ? args.scene : args.scene.substr(slash + 1);
 
-    anari::Library lib = anari::loadLibrary("photon", nullptr);
-    if (!lib)
+    std::fprintf(stderr, "Device: %s | Scene: %s | %ux%u @ %u spp\n",
+        args.device_lib.c_str(), args.scene.c_str(), args.width, args.height, args.spp);
+
+    anari::Library lib = anari::loadLibrary(args.device_lib.c_str(), nullptr);
+    if (!lib) {
+      std::fprintf(stderr, "Failed to load library '%s'\n", args.device_lib.c_str());
       return 1;
+    }
 
     anari::Device device = anari::newDevice(lib, "default");
     if (!device)
       return 1;
 
     anari::commitParameters(device, device);
+
+    auto t_scene_start = std::chrono::high_resolution_clock::now();
 
     auto sceneH = anari::scenes::createScene(device, category.c_str(), name.c_str());
     if (!sceneH)
@@ -124,28 +139,39 @@ int main(int argc, char **argv)
     anari::setParameter(device, camera, "aspect", float(args.width) / float(args.height));
     anari::commitParameters(device, camera);
 
-    anari::Renderer renderer = anari::newObject<anari::Renderer>(device, "pathtracer");
+    const char *renderer_type = (args.device_lib == "photon") ? "pathtracer" : "default";
+    anari::Renderer renderer = anari::newObject<anari::Renderer>(device, renderer_type);
     anari::setParameter(device, renderer, "pixelSamples", args.spp);
     anari::setParameter(device, renderer, "maxDepth", uint32_t(8));
     anari::commitParameters(device, renderer);
 
     anari::Frame frame = anari::newObject<anari::Frame>(device);
     anari::setParameter(device, frame, "size", anari::math::uint2(args.width, args.height));
+    anari::setParameter(device, frame, "channel.color", ANARI_FLOAT32_VEC4);
     anari::setParameter(device, frame, "world", world);
     anari::setParameter(device, frame, "camera", camera);
     anari::setParameter(device, frame, "renderer", renderer);
     anari::commitParameters(device, frame);
 
+    auto t_scene_end = std::chrono::high_resolution_clock::now();
+    double scene_ms = std::chrono::duration<double, std::milli>(t_scene_end - t_scene_start).count();
+    std::fprintf(stderr, "Scene setup: %.1f ms\n", scene_ms);
+
+    auto t_render_start = std::chrono::high_resolution_clock::now();
     anari::render(device, frame);
     anari::wait(device, frame);
+    auto t_render_end = std::chrono::high_resolution_clock::now();
+    double render_ms = std::chrono::duration<double, std::milli>(t_render_end - t_render_start).count();
+    std::fprintf(stderr, "Render: %.1f ms (%.2f fps)\n", render_ms, 1000.0 / render_ms);
 
-    auto fb = anari::map<anari::math::float4>(device, frame, "color");
+    auto fb = anari::map<anari::math::float4>(device, frame, "channel.color");
     if (!fb.data)
       return 3;
 
-    write_ppm("photon_scene_render.ppm", (const float *)fb.data, fb.width, fb.height);
+    write_ppm(args.output, (const float *)fb.data, fb.width, fb.height);
+    std::fprintf(stderr, "Output: %s\n", args.output.c_str());
 
-    anari::unmap(device, frame, "color");
+    anari::unmap(device, frame, "channel.color");
 
     anari::release(device, frame);
     anari::release(device, renderer);
