@@ -11,6 +11,6 @@ struct ConvertedScene {
   photon::pt::Camera camera;
 };
 
-ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt);
+ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base_dir = "");
 
 }

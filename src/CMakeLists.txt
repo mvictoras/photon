@@ -46,6 +46,7 @@ target_sources(anari_library_photon
     photon/pbrt/pbrt_parser.cpp
     photon/pbrt/pbrt_to_photon.cpp
     photon/pbrt/ply_reader.cpp
+    photon/pbrt/image_loader.cpp
   PUBLIC
     ${PROJECT_SOURCE_DIR}/include/photon/pathtracer/version.h
     ${PROJECT_SOURCE_DIR}/include/photon/anari/device.h
@@ -86,7 +87,12 @@ target_sources(anari_library_photon
     ${PROJECT_SOURCE_DIR}/include/photon/pbrt/pbrt_parser.h
     ${PROJECT_SOURCE_DIR}/include/photon/pbrt/pbrt_to_photon.h
      ${PROJECT_SOURCE_DIR}/include/photon/pbrt/ply_reader.h
+     ${PROJECT_SOURCE_DIR}/include/photon/pbrt/image_loader.h
  )
+
+target_include_directories(anari_library_photon PRIVATE
+  ${anari_SOURCE_DIR}/external/stb_image
+)
 
 if(PHOTON_EMBREE_READY)
   target_include_directories(anari_library_photon PUBLIC ${EMBREE_INCLUDE_DIRS})

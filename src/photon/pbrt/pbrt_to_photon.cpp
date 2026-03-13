@@ -1,4 +1,5 @@
 #include "photon/pbrt/pbrt_to_photon.h"
+#include "photon/pbrt/image_loader.h"
 
 #include <cmath>
 #include <cstdio>
@@ -39,9 +40,31 @@ static Vec3 transform_direction(const Mat4 &m, const Vec3 &d)
   return m.transform_direction(d);
 }
 
-ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt)
+static Vec3 sample_texture(const PbrtTexture &tex, float u, float v)
+{
+  u = u - std::floor(u);
+  v = v - std::floor(v);
+  int px = int(u * float(tex.width)) % tex.width;
+  int py = int((1.f - v) * float(tex.height)) % tex.height;
+  if (px < 0) px += tex.width;
+  if (py < 0) py += tex.height;
+  const size_t idx = (size_t(py) * size_t(tex.width) + size_t(px)) * 3;
+  if (idx + 2 >= tex.data.size())
+    return {0.5f, 0.5f, 0.5f};
+  return {tex.data[idx], tex.data[idx + 1], tex.data[idx + 2]};
+}
+
+ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base_dir)
 {
   ConvertedScene result;
+
+  auto &textures = const_cast<std::map<std::string, PbrtTexture> &>(pbrt.textures);
+  for (auto &[name, tex] : textures) {
+    if (tex.class_type == "imagemap" && !tex.filename.empty() && tex.data.empty()) {
+      std::string path = base_dir + tex.filename;
+      load_image(path, tex);
+    }
+  }
 
   uint64_t total_tris = 0;
   for (const auto &mesh : pbrt.meshes)
@@ -54,18 +77,35 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt)
 
   const uint64_t total_verts = total_tris * 3;
 
+  bool any_textured = false;
+  for (const auto &mesh : pbrt.meshes) {
+    auto mit = pbrt.named_materials.find(mesh.material_name);
+    if (mit != pbrt.named_materials.end() && !mit->second.reflectance_texture.empty()) {
+      auto tit = pbrt.textures.find(mit->second.reflectance_texture);
+      if (tit != pbrt.textures.end() && !tit->second.data.empty()) {
+        any_textured = true;
+        break;
+      }
+    }
+  }
+
   TriangleMesh tm;
   tm.positions = Kokkos::View<Vec3 *>("pos", total_verts);
   tm.indices = Kokkos::View<u32 *>("idx", total_verts);
   tm.material_ids = Kokkos::View<u32 *>("mat_id", total_tris);
   tm.albedo_per_prim = Kokkos::View<Vec3 *>("alb", total_tris);
   tm.normals = Kokkos::View<Vec3 *>("normals", total_verts);
+  if (any_textured)
+    tm.vertex_colors = Kokkos::View<Vec3 *>("vcol", total_verts);
 
   auto pos_h = Kokkos::create_mirror_view(tm.positions);
   auto idx_h = Kokkos::create_mirror_view(tm.indices);
   auto mat_id_h = Kokkos::create_mirror_view(tm.material_ids);
   auto alb_h = Kokkos::create_mirror_view(tm.albedo_per_prim);
   auto nrm_h = Kokkos::create_mirror_view(tm.normals);
+  decltype(Kokkos::create_mirror_view(tm.vertex_colors)) vcol_h;
+  if (any_textured)
+    vcol_h = Kokkos::create_mirror_view(tm.vertex_colors);
 
   std::vector<Material> materials_cpu;
   std::vector<Light> lights_cpu;
@@ -133,6 +173,17 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt)
     if (it != mat_name_to_id.end())
       mat_id = it->second;
 
+    const PbrtTexture *tex_ptr = nullptr;
+    {
+      auto mit = pbrt.named_materials.find(mesh.material_name);
+      if (mit != pbrt.named_materials.end() && !mit->second.reflectance_texture.empty()) {
+        auto tit = pbrt.textures.find(mit->second.reflectance_texture);
+        if (tit != pbrt.textures.end() && !tit->second.data.empty())
+          tex_ptr = &tit->second;
+      }
+    }
+    const bool has_uvs = mesh.uvs.size() >= (mesh.positions.size() / 3) * 2;
+
     if (mesh.is_emissive) {
       Material emit_mat{};
       emit_mat.base_color = {0.f, 0.f, 0.f};
@@ -181,6 +232,15 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt)
         nrm_h(vert_off + 2) = face_n;
       }
 
+      if (tex_ptr && has_uvs) {
+        float u0 = mesh.uvs[i0 * 2], v0 = mesh.uvs[i0 * 2 + 1];
+        float u1 = mesh.uvs[i1 * 2], v1 = mesh.uvs[i1 * 2 + 1];
+        float u2 = mesh.uvs[i2 * 2], v2 = mesh.uvs[i2 * 2 + 1];
+        vcol_h(vert_off + 0) = sample_texture(*tex_ptr, u0, v0);
+        vcol_h(vert_off + 1) = sample_texture(*tex_ptr, u1, v1);
+        vcol_h(vert_off + 2) = sample_texture(*tex_ptr, u2, v2);
+      }
+
       mat_id_h(tri_off) = mat_id;
       alb_h(tri_off) = materials_cpu[mat_id].base_color;
 
@@ -200,6 +260,8 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt)
   Kokkos::deep_copy(tm.material_ids, mat_id_h);
   Kokkos::deep_copy(tm.albedo_per_prim, alb_h);
   Kokkos::deep_copy(tm.normals, nrm_h);
+  if (any_textured)
+    Kokkos::deep_copy(tm.vertex_colors, vcol_h);
 
   Scene &scene = result.scene;
   scene.mesh = tm;
