@@ -566,9 +566,9 @@ const void *PhotonDevice::frameBufferMap(ANARIFrame fb, const char *channel, uin
   if (h)
     *h = m_fb_h;
 
-  const char *chan = channel ? channel : "color";
+  const char *chan = channel ? channel : "channel.color";
 
-  if (std::strcmp(chan, "color") == 0) {
+  if (std::strcmp(chan, "color") == 0 || std::strcmp(chan, "channel.color") == 0) {
     if (t)
       *t = ANARI_FLOAT32_VEC4;
     m_fb_bytes.resize(size_t(m_fb_w) * size_t(m_fb_h) * 4 * sizeof(float));
