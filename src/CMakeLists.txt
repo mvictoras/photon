@@ -43,6 +43,9 @@ target_sources(anari_library_photon
     photon/pt/backend/optix_backend.cpp
     photon/pt/backend/hiprt_backend.cpp
     photon/pt/backend/backend_factory.cpp
+    photon/pbrt/pbrt_parser.cpp
+    photon/pbrt/pbrt_to_photon.cpp
+    photon/pbrt/ply_reader.cpp
   PUBLIC
     ${PROJECT_SOURCE_DIR}/include/photon/pathtracer/version.h
     ${PROJECT_SOURCE_DIR}/include/photon/anari/device.h
@@ -79,5 +82,9 @@ target_sources(anari_library_photon
     ${PROJECT_SOURCE_DIR}/include/photon/pt/backend/embree_backend.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/backend/optix_backend.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/backend/hiprt_backend.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pbrt/pbrt_scene.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pbrt/pbrt_parser.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pbrt/pbrt_to_photon.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pbrt/ply_reader.h
  )
 
