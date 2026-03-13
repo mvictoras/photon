@@ -49,17 +49,15 @@ bool intersect_mesh_direct(const photon::pt::TriangleMesh &mesh, const photon::p
   auto pos_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.positions);
   auto idx_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.indices);
 
-  TriangleMesh m{pos_h, idx_h};
-
-  const u32 n = m.triangle_count();
+  const u32 n = u32(idx_h.extent(0) / 3);
   for (u32 tri = 0; tri < n; ++tri) {
-    const u32 i0 = m.indices(tri * 3 + 0);
-    const u32 i1 = m.indices(tri * 3 + 1);
-    const u32 i2 = m.indices(tri * 3 + 2);
+    const u32 i0 = idx_h(tri * 3 + 0);
+    const u32 i1 = idx_h(tri * 3 + 1);
+    const u32 i2 = idx_h(tri * 3 + 2);
 
-    const Vec3 v0 = m.positions(i0);
-    const Vec3 v1 = m.positions(i1);
-    const Vec3 v2 = m.positions(i2);
+    const Vec3 v0 = pos_h(i0);
+    const Vec3 v1 = pos_h(i1);
+    const Vec3 v2 = pos_h(i2);
 
     const TriHit h = intersect_triangle(ray, v0, v1, v2, 1e-3f, 1e30f);
     if (h.hit)
