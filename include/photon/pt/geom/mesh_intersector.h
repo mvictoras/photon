@@ -55,9 +55,7 @@ KOKKOS_FUNCTION inline MeshHit intersect_mesh_bvh(const TriangleMesh &mesh, cons
 
         best.t = h.t;
         best.p = ray.at(h.t);
-        Vec3 nn = normalize(cross(v1 - v0, v2 - v0));
-        if (dot(nn, ray.dir) > 0.f)
-          nn = nn * -1.f;
+        const Vec3 nn = normalize(cross(v1 - v0, v2 - v0));
         best.n = nn;
         best.shading_normal = nn;
         best.uv = Vec2{0.f, 0.f};
