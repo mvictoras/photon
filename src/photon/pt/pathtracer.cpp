@@ -121,7 +121,8 @@ RenderResult PathTracer::render() const
       const auto materials = scene.materials;
       const auto lights = scene.lights;
       const u32 light_count = scene.light_count;
-      const auto env_map = scene.env_map;
+      const bool has_env_map = scene.env_map.has_value();
+      const EnvironmentMap env_map_val = has_env_map ? scene.env_map.value() : EnvironmentMap{};
 
       Kokkos::parallel_for(
           "pt_shade",
@@ -136,8 +137,8 @@ RenderResult PathTracer::render() const
               const Vec3 dir = rays.directions(idx);
               Vec3 L{0.01f, 0.01f, 0.01f};
 
-              if (env_map.has_value()) {
-                L = env_map.value().evaluate(dir);
+              if (has_env_map) {
+                L = env_map_val.evaluate(dir);
               } else if (light_count == 0) {
                 L = eval_sky_gradient(dir);
               }
@@ -189,11 +190,11 @@ RenderResult PathTracer::render() const
                 }
               }
 
-              if (env_map.has_value() && mat.roughness >= 0.001f) {
+              if (has_env_map && mat.roughness >= 0.001f) {
                 f32 env_pdf = 0.f;
-                const Vec3 wi = env_map.value().sample_direction(rng, env_pdf);
+                const Vec3 wi = env_map_val.sample_direction(rng, env_pdf);
                 if (env_pdf > 0.f && dot(wi, n) > 0.f) {
-                  const Vec3 Li = env_map.value().evaluate(wi);
+                  const Vec3 Li = env_map_val.evaluate(wi);
                   const Vec3 f = disney_bsdf_eval(mat, wo, wi, n, sn);
                   const f32 bsdf_pdf = disney_bsdf_pdf(mat, wo, wi, n, sn);
                   const f32 w_mis = power_heuristic(1, env_pdf, 1, bsdf_pdf);

@@ -17,34 +17,6 @@ struct PrimRef
   Vec3 centroid;
 };
 
-Aabb tri_bounds(const TriangleMesh &mesh, u32 tri)
-{
-  const u32 i0 = mesh.indices(tri * 3 + 0);
-  const u32 i1 = mesh.indices(tri * 3 + 1);
-  const u32 i2 = mesh.indices(tri * 3 + 2);
-
-  const Vec3 v0 = mesh.positions(i0);
-  const Vec3 v1 = mesh.positions(i1);
-  const Vec3 v2 = mesh.positions(i2);
-
-  Aabb b;
-  b.extend(v0);
-  b.extend(v1);
-  b.extend(v2);
-  return b;
-}
-
-Vec3 tri_centroid(const TriangleMesh &mesh, u32 tri)
-{
-  const u32 i0 = mesh.indices(tri * 3 + 0);
-  const u32 i1 = mesh.indices(tri * 3 + 1);
-  const u32 i2 = mesh.indices(tri * 3 + 2);
-  const Vec3 v0 = mesh.positions(i0);
-  const Vec3 v1 = mesh.positions(i1);
-  const Vec3 v2 = mesh.positions(i2);
-  return (v0 + v1 + v2) * (1.f / 3.f);
-}
-
 u32 build_node(std::vector<BvhNode> &nodes, std::vector<PrimRef> &prims, std::vector<u32> &prim_ids, u32 begin,
     u32 end)
 {
@@ -109,13 +81,19 @@ Bvh Bvh::build_cpu(const TriangleMesh &mesh)
   auto pos_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.positions);
   auto idx_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.indices);
 
-  TriangleMesh host_mesh{pos_h, idx_h, {}};
-
   std::vector<PrimRef> prims(ntris);
   for (u32 i = 0; i < ntris; ++i) {
+    const u32 ii0 = idx_h(i * 3 + 0);
+    const u32 ii1 = idx_h(i * 3 + 1);
+    const u32 ii2 = idx_h(i * 3 + 2);
+    const Vec3 v0 = pos_h(ii0);
+    const Vec3 v1 = pos_h(ii1);
+    const Vec3 v2 = pos_h(ii2);
     prims[i].id = i;
-    prims[i].bounds = tri_bounds(host_mesh, i);
-    prims[i].centroid = tri_centroid(host_mesh, i);
+    Aabb b;
+    b.extend(v0); b.extend(v1); b.extend(v2);
+    prims[i].bounds = b;
+    prims[i].centroid = (v0 + v1 + v2) * (1.f / 3.f);
   }
 
 
