@@ -44,6 +44,8 @@ void KokkosBackend::trace_closest(const RayBatch &rays, HitBatch &hits)
           hr.prim_id = mh.prim_id;
           hr.geom_id = mh.geom_id;
           hr.material_id = mh.material_id;
+          hr.interpolated_color = mh.interpolated_color;
+          hr.has_interpolated_color = mh.has_interpolated_color;
         }
       });
   Kokkos::fence();

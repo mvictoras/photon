@@ -17,11 +17,13 @@ struct HitResult {
   Vec3 normal;
   Vec3 shading_normal;
   Vec2 uv;
+  Vec3 interpolated_color{0.f, 0.f, 0.f};
   u32 prim_id{0};
   u32 geom_id{0};
   u32 inst_id{0};
   u32 material_id{0};
   bool hit{false};
+  bool has_interpolated_color{false};
 };
 
 struct RayBatch {

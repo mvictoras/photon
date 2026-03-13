@@ -16,10 +16,12 @@ struct MeshHit
   Vec3 n;
   Vec3 shading_normal;
   Vec2 uv{0.f, 0.f};
+  Vec3 interpolated_color{0.f, 0.f, 0.f};
   u32 prim_id{0};
   u32 geom_id{0};
   u32 material_id{0};
   bool hit{false};
+  bool has_interpolated_color{false};
 };
 
 KOKKOS_FUNCTION inline MeshHit intersect_mesh_bvh(const TriangleMesh &mesh, const Bvh &bvh, const Ray &ray, f32 tmin,
@@ -81,6 +83,14 @@ KOKKOS_FUNCTION inline MeshHit intersect_mesh_bvh(const TriangleMesh &mesh, cons
           const Vec2 uv1 = mesh.texcoords(i1);
           const Vec2 uv2 = mesh.texcoords(i2);
           best.uv = Vec2{uv0.x * w0 + uv1.x * w1 + uv2.x * w2, uv0.y * w0 + uv1.y * w1 + uv2.y * w2};
+        }
+
+        if (mesh.has_vertex_colors()) {
+          const Vec3 vc0 = mesh.vertex_colors(i0);
+          const Vec3 vc1 = mesh.vertex_colors(i1);
+          const Vec3 vc2 = mesh.vertex_colors(i2);
+          best.interpolated_color = vc0 * w0 + vc1 * w1 + vc2 * w2;
+          best.has_interpolated_color = true;
         }
 
         if (mesh.has_material_ids()) {
