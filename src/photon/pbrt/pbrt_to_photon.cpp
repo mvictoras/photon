@@ -94,7 +94,10 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt)
       m.base_color = {1.f, 1.f, 1.f};
       m.ior = pmat.eta_scalar;
       m.transmission = 1.f;
-      m.roughness = pmat.roughness;
+      float r = pmat.roughness;
+      if (pmat.uroughness >= 0.f)
+        r = (pmat.uroughness + (pmat.vroughness >= 0.f ? pmat.vroughness : pmat.uroughness)) * 0.5f;
+      m.roughness = r;
     } else if (pmat.type == "coateddiffuse") {
       m.base_color = {pmat.reflectance.x, pmat.reflectance.y, pmat.reflectance.z};
       m.metallic = 0.f;

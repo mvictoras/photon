@@ -227,13 +227,21 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
 {
   BsdfSample out{};
 
-  if (dot(wo, n) <= 0.f)
+  const bool front_face = dot(wo, n) > 0.f;
+  if (!front_face && mat.transmission <= 0.f)
     return out;
 
   const f32 rough = Kokkos::fmax(mat.roughness, 0.001f);
 
   f32 w_diffuse, w_specular, w_transmission, w_clearcoat;
-  disney_lobe_weights(mat, w_diffuse, w_specular, w_transmission, w_clearcoat);
+  if (front_face) {
+    disney_lobe_weights(mat, w_diffuse, w_specular, w_transmission, w_clearcoat);
+  } else {
+    w_diffuse = 0.f;
+    w_specular = 0.f;
+    w_transmission = 1.f;
+    w_clearcoat = 0.f;
+  }
 
   const f32 sum_w = w_diffuse + w_specular + w_transmission + w_clearcoat;
   if (sum_w <= 0.f)
@@ -283,10 +291,11 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
 
   if (xi < p_diffuse + p_specular + p_transmission && mat.transmission > 0.f) {
     if (mat.roughness < 0.1f) {
-      const f32 eta = (dot(wo, shading_n) > 0.f) ? (1.f / mat.ior) : mat.ior;
-      const Vec3 wt = refract(-wo, shading_n, eta);
+      const Vec3 nn = front_face ? shading_n : shading_n * -1.f;
+      const f32 eta = front_face ? (1.f / mat.ior) : mat.ior;
+      const Vec3 wt = refract(-wo, nn, eta);
       if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f) {
-        out.wi = reflect(-wo, shading_n);
+        out.wi = reflect(-wo, nn);
       } else {
         out.wi = wt;
       }
@@ -296,8 +305,9 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
       return out;
     }
 
-    out.wi = reflect(-wo, shading_n);
-    if (dot(out.wi, n) <= 0.f)
+    const Vec3 nn = front_face ? shading_n : shading_n * -1.f;
+    out.wi = reflect(-wo, nn);
+    if (dot(out.wi, nn) <= 0.f)
       return BsdfSample{};
     out.f = disney_bsdf_eval(mat, wo, out.wi, n, shading_n);
     out.pdf = disney_bsdf_pdf(mat, wo, out.wi, n, shading_n);
