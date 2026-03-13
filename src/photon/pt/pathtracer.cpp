@@ -158,7 +158,12 @@ RenderResult PathTracer::render() const
               sn = sn * -1.f;
             }
 
-            const Material mat = materials.extent(0) ? materials(hr.material_id) : Material{};
+            Material mat = materials.extent(0) ? materials(hr.material_id) : Material{};
+
+            // Override material base_color with interpolated per-vertex color
+            if (hr.has_interpolated_color) {
+              mat.base_color = hr.interpolated_color;
+            }
 
             if (bounce == 0 && aov_written(idx) == 0u) {
               aov_written(idx) = 1u;

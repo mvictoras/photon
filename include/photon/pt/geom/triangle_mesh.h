@@ -15,6 +15,7 @@ struct TriangleMesh
   Kokkos::View<Vec3 *> normals;
   Kokkos::View<Vec2 *> texcoords;
   Kokkos::View<u32 *> material_ids;
+  Kokkos::View<Vec3 *> vertex_colors;
 
   u32 triangle_count() const
   {
@@ -34,6 +35,11 @@ struct TriangleMesh
   KOKKOS_FUNCTION bool has_material_ids() const
   {
     return material_ids.extent(0) > 0;
+  }
+
+  KOKKOS_FUNCTION bool has_vertex_colors() const
+  {
+    return vertex_colors.extent(0) > 0;
   }
 };
 
