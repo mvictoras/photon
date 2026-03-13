@@ -217,7 +217,17 @@ ANARIMaterial PhotonDevice::newMaterial(const char *type)
   return (ANARIMaterial)h;
 }
 
-ANARISampler PhotonDevice::newSampler(const char *) { return nullptr; }
+ANARISampler PhotonDevice::newSampler(const char *type)
+{
+  const uintptr_t h = alloc_handle(ANARI_SAMPLER);
+  auto *o = get((ANARIObject)h);
+  if (o && type) {
+    const size_t n = std::strlen(type) + 1;
+    o->params["subtype"] = std::vector<std::byte>(n);
+    std::memcpy(o->params["subtype"].data(), type, n);
+  }
+  return (ANARISampler)h;
+}
 
 ANARIGroup PhotonDevice::newGroup() { return (ANARIGroup)alloc_handle(ANARI_GROUP); }
 
@@ -684,8 +694,9 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
   for (uint32_t y = 0; y < m_fb_h; ++y) {
     for (uint32_t x = 0; x < m_fb_w; ++x) {
       const size_t idx = size_t(y) * size_t(m_fb_w) + x;
+      const uint32_t src_y = m_fb_h - 1 - y;
 
-      const auto c = photon::pt::clamp01(color_host(y, x));
+      const auto c = photon::pt::clamp01(color_host(src_y, x));
       out[4 * idx + 0] = c.x;
       out[4 * idx + 1] = c.y;
       out[4 * idx + 2] = c.z;
@@ -696,14 +707,14 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
       m_channel_color[4 * idx + 2] = c.z;
       m_channel_color[4 * idx + 3] = 1.f;
 
-      m_channel_depth[idx] = depth_host(y, x);
+      m_channel_depth[idx] = depth_host(src_y, x);
 
-      const auto n = normal_host(y, x);
+      const auto n = normal_host(src_y, x);
       m_channel_normal[3 * idx + 0] = n.x;
       m_channel_normal[3 * idx + 1] = n.y;
       m_channel_normal[3 * idx + 2] = n.z;
 
-      const auto a = albedo_host(y, x);
+      const auto a = albedo_host(src_y, x);
       m_channel_albedo[3 * idx + 0] = a.x;
       m_channel_albedo[3 * idx + 1] = a.y;
       m_channel_albedo[3 * idx + 2] = a.z;
