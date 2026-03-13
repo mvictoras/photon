@@ -153,7 +153,11 @@ RenderResult PathTracer::render() const
 
             Vec3 n = hr.normal;
             Vec3 sn = hr.shading_normal;
-            if (dot(n, wo) < 0.f) {
+
+            Material mat_pre = materials.extent(0) ? materials(hr.material_id) : Material{};
+            const bool is_transmissive = mat_pre.transmission > 0.f;
+
+            if (!is_transmissive && dot(n, wo) < 0.f) {
               n = n * -1.f;
               sn = sn * -1.f;
             }
@@ -247,8 +251,11 @@ RenderResult PathTracer::render() const
 
             throughput(idx) = throughput(idx) * (bs.f * (1.f / bs.pdf));
 
-            rays.origins(idx) = p;
-            rays.directions(idx) = normalize(bs.wi);
+            const Vec3 wi = normalize(bs.wi);
+            const bool entering = dot(wi, hr.normal) < 0.f;
+            const Vec3 offset = entering ? hr.normal * -1e-3f : hr.normal * 1e-3f;
+            rays.origins(idx) = bs.is_specular && is_transmissive ? p + offset : p;
+            rays.directions(idx) = wi;
             rays.tmin(idx) = 1e-3f;
             rays.tmax(idx) = 1e30f;
           });
