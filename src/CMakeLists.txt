@@ -85,6 +85,66 @@ target_sources(anari_library_photon
     ${PROJECT_SOURCE_DIR}/include/photon/pbrt/pbrt_scene.h
     ${PROJECT_SOURCE_DIR}/include/photon/pbrt/pbrt_parser.h
     ${PROJECT_SOURCE_DIR}/include/photon/pbrt/pbrt_to_photon.h
-    ${PROJECT_SOURCE_DIR}/include/photon/pbrt/ply_reader.h
+     ${PROJECT_SOURCE_DIR}/include/photon/pbrt/ply_reader.h
  )
+
+if(PHOTON_EMBREE_READY)
+  target_include_directories(anari_library_photon PUBLIC ${EMBREE_INCLUDE_DIRS})
+  target_link_libraries(anari_library_photon PUBLIC ${EMBREE_LIBRARIES})
+  target_compile_definitions(anari_library_photon PUBLIC PHOTON_HAS_EMBREE)
+endif()
+
+if(PHOTON_OPTIX_READY)
+  target_include_directories(anari_library_photon PUBLIC ${PHOTON_OPTIX_INCLUDE_DIR})
+  target_link_libraries(anari_library_photon PUBLIC CUDA::cudart CUDA::cuda_driver)
+  target_compile_definitions(anari_library_photon PUBLIC PHOTON_HAS_OPTIX)
+
+  set(OPTIX_PTX_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/photon/pt/backend/optix/photon_optix.cu")
+  set(OPTIX_PTX_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/photon_optix.ptx")
+  set(OPTIX_PTX_EMBED  "${CMAKE_CURRENT_BINARY_DIR}/photon_optix_ptx.cpp")
+
+  add_custom_command(
+    OUTPUT ${OPTIX_PTX_OUTPUT}
+    COMMAND ${CUDAToolkit_NVCC_EXECUTABLE}
+      -ptx
+      -I${PHOTON_OPTIX_INCLUDE_DIR}
+      -I${CUDAToolkit_INCLUDE_DIRS}
+      --use_fast_math
+      -O3
+      ${OPTIX_PTX_SOURCE}
+      -o ${OPTIX_PTX_OUTPUT}
+    DEPENDS ${OPTIX_PTX_SOURCE}
+    COMMENT "Compiling OptiX PTX kernel"
+  )
+
+  set(OPTIX_EMBED_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/embed_ptx.py")
+  file(WRITE ${OPTIX_EMBED_SCRIPT}
+"import sys
+ptx = open(sys.argv[1], 'r').read()
+with open(sys.argv[2], 'w') as f:
+    f.write('namespace photon::pt {\\n')
+    f.write('extern const char photon_optix_ptx[] = R\"PTX(' + ptx + ')PTX\";\\n')
+    f.write('extern const unsigned long long photon_optix_ptx_size = sizeof(photon_optix_ptx) - 1;\\n')
+    f.write('}\\n')
+")
+
+  add_custom_command(
+    OUTPUT ${OPTIX_PTX_EMBED}
+    COMMAND python3 ${OPTIX_EMBED_SCRIPT} ${OPTIX_PTX_OUTPUT} ${OPTIX_PTX_EMBED}
+    DEPENDS ${OPTIX_PTX_OUTPUT}
+    COMMENT "Embedding OptiX PTX into C++ source"
+  )
+
+  target_sources(anari_library_photon PRIVATE ${OPTIX_PTX_EMBED})
+endif()
+
+if(PHOTON_HIPRT_READY)
+  target_link_libraries(anari_library_photon PUBLIC hiprt::hiprt)
+  target_compile_definitions(anari_library_photon PUBLIC PHOTON_HAS_HIPRT)
+endif()
+
+if(PHOTON_OIDN_READY)
+  target_compile_definitions(anari_library_photon PUBLIC PHOTON_HAS_OIDN)
+  target_link_libraries(anari_library_photon PUBLIC OpenImageDenoise)
+endif()
 
