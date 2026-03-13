@@ -149,9 +149,14 @@ RenderResult PathTracer::render() const
             }
 
             const Vec3 p = hr.position;
-            const Vec3 n = hr.normal;
-            const Vec3 sn = hr.shading_normal;
             const Vec3 wo = normalize(-rays.directions(idx));
+
+            Vec3 n = hr.normal;
+            Vec3 sn = hr.shading_normal;
+            if (dot(n, wo) < 0.f) {
+              n = n * -1.f;
+              sn = sn * -1.f;
+            }
 
             const Material mat = materials.extent(0) ? materials(hr.material_id) : Material{};
 
@@ -173,9 +178,16 @@ RenderResult PathTracer::render() const
                 const u32 light_idx = u32(rng.next_f32() * f32(light_count));
                 const Light light = lights(light_idx);
                 const LightSample ls = sample_light(light, p, rng);
-                if (ls.pdf > 0.f && (ls.Li.x > 0.f || ls.Li.y > 0.f || ls.Li.z > 0.f) && dot(ls.wi, n) > 0.f) {
-                  const Vec3 f = disney_bsdf_eval(mat, wo, ls.wi, n, sn);
-                  const f32 bsdf_pdf = disney_bsdf_pdf(mat, wo, ls.wi, n, sn);
+
+                // Two-sided NEE: flip normals toward the light if needed
+                const f32 nee_cos = dot(ls.wi, n);
+                const Vec3 n_l = nee_cos >= 0.f ? n : n * -1.f;
+                const Vec3 sn_l = nee_cos >= 0.f ? sn : sn * -1.f;
+                const Vec3 wo_l = nee_cos >= 0.f ? wo : wo * -1.f;
+
+                if (ls.pdf > 0.f && (ls.Li.x > 0.f || ls.Li.y > 0.f || ls.Li.z > 0.f) && Kokkos::fabs(nee_cos) > 0.f) {
+                  const Vec3 f = disney_bsdf_eval(mat, wo_l, ls.wi, n_l, sn_l);
+                  const f32 bsdf_pdf = disney_bsdf_pdf(mat, wo_l, ls.wi, n_l, sn_l);
                   const f32 w_mis = ls.is_delta ? 1.f : power_heuristic(1, ls.pdf, 1, bsdf_pdf);
                   const f32 inv_light_pdf = 1.f / (ls.pdf * f32(light_count));
                   const Vec3 nee = throughput(idx) * f * ls.Li * (w_mis * inv_light_pdf);
