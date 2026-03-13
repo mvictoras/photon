@@ -4,32 +4,33 @@ include(FetchContent)
 
 set(FETCHCONTENT_QUIET OFF)
 
-option(OPENCODE_ENABLE_CUDA "Enable Kokkos CUDA backend" OFF)
+option(OPENCODE_ENABLE_CUDA "Enable Kokkos CUDA backend" ON)
 option(OPENCODE_ENABLE_HIP "Enable Kokkos HIP backend" OFF)
 option(OPENCODE_ENABLE_SYCL "Enable Kokkos SYCL backend" OFF)
 
-set(Kokkos_ENABLE_SERIAL ON CACHE BOOL "" FORCE)
-set(Kokkos_ENABLE_OPENMP ON CACHE BOOL "" FORCE)
-set(Kokkos_ENABLE_POSITION_INDEPENDENT_CODE ON CACHE BOOL "" FORCE)
+# --------------------------------------------------------------------------
+# Kokkos: prefer a pre-installed build (required for CUDA to avoid
+# nvcc_wrapper compiling the ANARI SDK which conflicts with CUDA's float4).
+# Fall back to FetchContent if no installed Kokkos is found.
+# --------------------------------------------------------------------------
+find_package(Kokkos 5.0 QUIET)
+if(Kokkos_FOUND)
+  message(STATUS "Using pre-installed Kokkos: ${Kokkos_DIR}")
+else()
+  message(STATUS "Pre-installed Kokkos not found — fetching via FetchContent (CUDA disabled)")
+  # FetchContent Kokkos cannot use CUDA without nvcc_wrapper as global compiler
+  set(Kokkos_ENABLE_SERIAL ON CACHE BOOL "" FORCE)
+  set(Kokkos_ENABLE_OPENMP ON CACHE BOOL "" FORCE)
+  set(Kokkos_ENABLE_POSITION_INDEPENDENT_CODE ON CACHE BOOL "" FORCE)
+  set(Kokkos_ENABLE_MDSPAN OFF CACHE BOOL "" FORCE)
 
-if(OPENCODE_ENABLE_CUDA)
-  set(Kokkos_ENABLE_CUDA ON CACHE BOOL "" FORCE)
+  FetchContent_Declare(
+    kokkos
+    GIT_REPOSITORY https://github.com/kokkos/kokkos.git
+    GIT_TAG 5.0.1
+  )
+  FetchContent_MakeAvailable(kokkos)
 endif()
-if(OPENCODE_ENABLE_HIP)
-  set(Kokkos_ENABLE_HIP ON CACHE BOOL "" FORCE)
-endif()
-if(OPENCODE_ENABLE_SYCL)
-  set(Kokkos_ENABLE_SYCL ON CACHE BOOL "" FORCE)
-endif()
-
-set(Kokkos_ENABLE_MDSPAN OFF CACHE BOOL "" FORCE)
-
-FetchContent_Declare(
-  kokkos
-  GIT_REPOSITORY https://github.com/kokkos/kokkos.git
-  GIT_TAG 5.0.1
-)
-FetchContent_MakeAvailable(kokkos)
 
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_VIEWER OFF CACHE BOOL "" FORCE)
