@@ -20,7 +20,27 @@ struct EmbreeBackend : RayBackend {
 private:
   RTCDevice m_device{nullptr};
   RTCScene m_scene{nullptr};
-  TriangleMesh m_mesh;
+
+  Kokkos::View<Vec3 *, Kokkos::HostSpace> m_positions_h;
+  Kokkos::View<u32 *, Kokkos::HostSpace> m_indices_h;
+  Kokkos::View<Vec3 *, Kokkos::HostSpace> m_normals_h;
+  Kokkos::View<Vec2 *, Kokkos::HostSpace> m_texcoords_h;
+  Kokkos::View<u32 *, Kokkos::HostSpace> m_material_ids_h;
+  Kokkos::View<Vec3 *, Kokkos::HostSpace> m_vertex_colors_h;
+  bool m_has_normals{false};
+  bool m_has_texcoords{false};
+  bool m_has_material_ids{false};
+  bool m_has_vertex_colors{false};
+
+  Kokkos::View<Vec3 *, Kokkos::HostSpace> m_ray_org_h;
+  Kokkos::View<Vec3 *, Kokkos::HostSpace> m_ray_dir_h;
+  Kokkos::View<f32 *, Kokkos::HostSpace> m_ray_tmin_h;
+  Kokkos::View<f32 *, Kokkos::HostSpace> m_ray_tmax_h;
+  Kokkos::View<HitResult *, Kokkos::HostSpace> m_hit_h;
+  Kokkos::View<u32 *, Kokkos::HostSpace> m_occ_h;
+  u32 m_buf_size{0};
+
+  void ensure_buffers(u32 n);
 };
 
 } // namespace photon::pt
