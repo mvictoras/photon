@@ -27,6 +27,8 @@ struct Light {
   u32 mesh_prim_begin{0};
   u32 mesh_prim_count{0};
   f32 area{0.f};
+  Vec3 edge1{0.f, 0.f, 0.f};
+  Vec3 edge2{0.f, 0.f, 0.f};
 };
 
 struct LightSample {
@@ -48,7 +50,7 @@ KOKKOS_FUNCTION inline f32 smoothstep(f32 edge0, f32 edge1, f32 x)
   return t * t * (3.f - 2.f * t);
 }
 
-KOKKOS_FUNCTION inline LightSample sample_light(const Light &light, const Vec3 &hit_pos, Rng &)
+KOKKOS_FUNCTION inline LightSample sample_light(const Light &light, const Vec3 &hit_pos, Rng &rng)
 {
   constexpr f32 INF = 1e30f;
 
@@ -90,16 +92,41 @@ KOKKOS_FUNCTION inline LightSample sample_light(const Light &light, const Vec3 &
   }
 
   if (light.type == LightType::Area) {
-    return {Vec3{0.f, 1.f, 0.f}, Vec3{0.f, 0.f, 0.f}, 0.f, 0.f, false};
+    const f32 u = rng.next_f32();
+    const f32 v = rng.next_f32();
+    const Vec3 sample_pos = light.position + light.edge1 * u + light.edge2 * v;
+    const Vec3 light_normal = normalize(cross(light.edge1, light.edge2));
+    const Vec3 to = sample_pos - hit_pos;
+    const f32 dist = length(to);
+    if (dist < 1e-6f)
+      return {Vec3{0.f, 1.f, 0.f}, Vec3{0.f, 0.f, 0.f}, 0.f, 0.f, false};
+    const Vec3 wi = to * (1.f / dist);
+    const f32 cos_light = -dot(wi, light_normal);
+    if (cos_light <= 0.f)
+      return {Vec3{0.f, 1.f, 0.f}, Vec3{0.f, 0.f, 0.f}, 0.f, 0.f, false};
+    const f32 light_area = light.area > 0.f ? light.area : length(cross(light.edge1, light.edge2));
+    const f32 pdf_area = 1.f / light_area;
+    const f32 pdf_solid = pdf_area * (dist * dist) / cos_light;
+    const Vec3 Le = light.color * light.intensity;
+    return {wi, Le, pdf_solid, dist - 1e-4f, false};
   }
 
   return {Vec3{0.f, 1.f, 0.f}, Vec3{0.f, 0.f, 0.f}, 0.f, 0.f, false};
 }
 
-KOKKOS_FUNCTION inline f32 light_pdf(const Light &light, const Vec3 &, const Vec3 &)
+KOKKOS_FUNCTION inline f32 light_pdf(const Light &light, const Vec3 &hit_pos, const Vec3 &wi)
 {
   if (light.type == LightType::Point || light.type == LightType::Directional || light.type == LightType::Spot)
     return 0.f;
+  if (light.type == LightType::Area) {
+    const Vec3 light_normal = normalize(cross(light.edge1, light.edge2));
+    const f32 cos_light = -dot(wi, light_normal);
+    if (cos_light <= 0.f)
+      return 0.f;
+    const f32 light_area = light.area > 0.f ? light.area : length(cross(light.edge1, light.edge2));
+    const f32 to_light = length(hit_pos - light.position);
+    return (1.f / light_area) * (to_light * to_light) / cos_light;
+  }
   return 0.f;
 }
 

@@ -721,6 +721,33 @@ std::optional<photon::pt::Scene> build_scene_from_anari(ANARIWorld world, const 
         light.intensity = intensity;
 
         lightsCpu.push_back(light);
+      } else if (std::strcmp(lightType, "quad") == 0) {
+        light.type = photon::pt::LightType::Area;
+        photon::pt::Vec3 position{0.f, 0.f, 0.f};
+        read_param(lo, "position", position);
+        light.position = position;
+
+        photon::pt::Vec3 edge1{1.f, 0.f, 0.f};
+        read_param(lo, "edge1", edge1);
+        light.edge1 = edge1;
+
+        photon::pt::Vec3 edge2{0.f, 0.f, 1.f};
+        read_param(lo, "edge2", edge2);
+        light.edge2 = edge2;
+
+        photon::pt::Vec3 color{1.f, 1.f, 1.f};
+        read_param(lo, "color", color);
+        light.color = color;
+
+        float intensity = 1.f;
+        read_param(lo, "intensity", intensity);
+        light.intensity = intensity;
+
+        photon::pt::Vec3 cr = photon::pt::cross(edge1, edge2);
+        light.area = photon::pt::length(cr);
+        light.direction = light.area > 0.f ? cr * (1.f / light.area) : photon::pt::Vec3{0.f, -1.f, 0.f};
+
+        lightsCpu.push_back(light);
       }
     }
   }
