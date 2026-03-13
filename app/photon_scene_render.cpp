@@ -5,6 +5,7 @@
 #include <Kokkos_Core.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
@@ -73,6 +74,7 @@ void write_ppm(const std::string &file, const float *rgba, uint32_t w, uint32_t 
 
       auto to_u8 = [](float v) {
         v = v < 0.f ? 0.f : (v > 1.f ? 1.f : v);
+        v = std::pow(v, 1.f / 2.2f);
         return (unsigned char)(v * 255.f + 0.5f);
       };
 

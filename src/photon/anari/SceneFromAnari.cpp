@@ -535,7 +535,10 @@ void merge_surfaces_to_mesh(const std::vector<SurfaceGeometry> &surfaces,
         const auto &c0 = (t.a < sg.vertex_colors.size()) ? sg.vertex_colors[t.a] : sg.material.mat.base_color;
         const auto &c1 = (t.b < sg.vertex_colors.size()) ? sg.vertex_colors[t.b] : sg.material.mat.base_color;
         const auto &c2 = (t.c < sg.vertex_colors.size()) ? sg.vertex_colors[t.c] : sg.material.mat.base_color;
-        const photon::pt::Vec3 alb = (c0 + c1 + c2) * (1.f / 3.f);
+        photon::pt::Vec3 alb = (c0 + c1 + c2) * (1.f / 3.f);
+        alb.x = std::fmax(0.f, std::fmin(1.f, alb.x));
+        alb.y = std::fmax(0.f, std::fmin(1.f, alb.y));
+        alb.z = std::fmax(0.f, std::fmin(1.f, alb.z));
 
         const uint32_t matId = uint32_t(matsCpu.size());
         photon::pt::Material triMat = sg.material.mat;
@@ -665,11 +668,13 @@ std::optional<photon::pt::Scene> build_scene_from_anari(ANARIWorld world, const 
   s.bvh = photon::pt::Bvh::build_cpu(mesh);
 
   s.material_count = uint32_t(matsCpu.size());
-  s.materials = Kokkos::View<photon::pt::Material *>("materials", s.material_count);
-  auto mats_h = Kokkos::create_mirror_view(s.materials);
-  for (uint32_t i = 0; i < s.material_count; ++i)
-    mats_h(i) = matsCpu[i];
-  Kokkos::deep_copy(s.materials, mats_h);
+  {
+    Kokkos::View<photon::pt::Material *, Kokkos::HostSpace> mats_host("mats_host", s.material_count);
+    for (uint32_t i = 0; i < s.material_count; ++i)
+      mats_host(i) = matsCpu[i];
+    s.materials = Kokkos::View<photon::pt::Material *>("materials", s.material_count);
+    Kokkos::deep_copy(s.materials, mats_host);
+  }
 
   // ── Lights ──
   std::vector<photon::pt::Light> lightsCpu;
