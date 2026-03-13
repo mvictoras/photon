@@ -24,6 +24,10 @@ target_link_libraries(photon_anari_render PRIVATE anari_library_photon anari)
 
 target_include_directories(photon_anari_render PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
 
+add_executable(photon_pbrt_render photon_pbrt_render.cpp)
+
+target_link_libraries(photon_pbrt_render PRIVATE anari_library_photon)
+
 add_executable(photon_scene_render photon_scene_render.cpp)
 
 target_link_libraries(photon_scene_render PRIVATE anari_library_photon anari anari_test_scenes helium)
