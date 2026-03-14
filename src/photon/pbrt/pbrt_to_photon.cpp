@@ -15,6 +15,7 @@
 #include "photon/pt/material.h"
 #include "photon/pt/math.h"
 #include "photon/pt/math_mat4.h"
+#include "photon/pt/environment_map.h"
 #include "photon/pt/scene.h"
 
 namespace photon::pbrt {
@@ -378,7 +379,32 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
     Kokkos::deep_copy(scene.lights, lights_h);
   }
 
-  // pbrt Transform is world-to-camera; camera looks down +z in camera space
+  if (pbrt.has_env_map && !pbrt.env_map_filename.empty()) {
+    PbrtTexture env_tex;
+    std::string env_path = base_dir + pbrt.env_map_filename;
+    if (load_image(env_path, env_tex)) {
+      EnvironmentMap env;
+      env.width = u32(env_tex.width);
+      env.height = u32(env_tex.height);
+      env.pixels = Kokkos::View<Vec3 **, Kokkos::LayoutRight>("env_pixels", env.height, env.width);
+      auto epix_h = Kokkos::create_mirror_view(env.pixels);
+      for (u32 y = 0; y < env.height; ++y)
+        for (u32 x = 0; x < env.width; ++x) {
+          size_t si = (size_t(y) * env.width + x) * 3;
+          epix_h(y, x) = {
+            env_tex.data[si] * pbrt.env_map_scale,
+            env_tex.data[si + 1] * pbrt.env_map_scale,
+            env_tex.data[si + 2] * pbrt.env_map_scale};
+        }
+      Kokkos::deep_copy(env.pixels, epix_h);
+      env.marginal_cdf = Kokkos::View<f32 *>("env_marginal", env.height + 1);
+      env.conditional_cdf = Kokkos::View<f32 **>("env_conditional", env.height, env.width + 1);
+      env.build_cdf();
+      scene.env_map = env;
+      std::fprintf(stderr, "  Environment map: %s (%ux%u)\n", env_path.c_str(), env.width, env.height);
+    }
+  }
+
   Mat4 world_to_cam = mat4_from_pbrt_column_major(pbrt.camera.transform);
   Mat4 cam_to_world = world_to_cam.inverse();
 

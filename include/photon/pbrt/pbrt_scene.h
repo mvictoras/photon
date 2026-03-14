@@ -63,6 +63,11 @@ struct PbrtScene {
   std::map<std::string, PbrtTexture> textures;
   std::map<std::string, PbrtMaterial> named_materials;
   std::vector<PbrtTriMesh> meshes;
+
+  std::string env_map_filename;
+  float env_map_transform[16]{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+  float env_map_scale{1.f};
+  bool has_env_map{false};
 };
 
 }
