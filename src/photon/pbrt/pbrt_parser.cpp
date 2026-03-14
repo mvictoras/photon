@@ -365,6 +365,56 @@ PbrtScene parse_pbrt_file(const std::string &path)
           else
             std::fprintf(stderr, "Warning: failed to load PLY: %s\n", ply_path.c_str());
         }
+      } else if (type.text == "sphere") {
+        PbrtTriMesh mesh;
+        mesh.material_name = state.current_material;
+        std::memcpy(mesh.transform, state.transform, 16 * sizeof(float));
+        if (state.in_area_light) {
+          mesh.is_emissive = true;
+          mesh.emission = state.area_light_emission;
+        }
+        float radius = 1.f;
+        while (tok.peek().kind == Token::STRING) {
+          auto pv = parse_param(tok);
+          if (pv.name == "radius" && !pv.floats.empty())
+            radius = pv.floats[0];
+        }
+
+        const int slices = 32, stacks = 16;
+        for (int j = 0; j <= stacks; ++j) {
+          float v = float(j) / float(stacks);
+          float theta = v * 3.14159265f;
+          float sin_t = std::sin(theta), cos_t = std::cos(theta);
+          for (int i = 0; i <= slices; ++i) {
+            float u_f = float(i) / float(slices);
+            float phi = u_f * 6.28318530f;
+            float x = sin_t * std::cos(phi) * radius;
+            float y = cos_t * radius;
+            float z = sin_t * std::sin(phi) * radius;
+            mesh.positions.push_back(x);
+            mesh.positions.push_back(y);
+            mesh.positions.push_back(z);
+            mesh.normals.push_back(sin_t * std::cos(phi));
+            mesh.normals.push_back(cos_t);
+            mesh.normals.push_back(sin_t * std::sin(phi));
+          }
+        }
+        for (int j = 0; j < stacks; ++j) {
+          for (int i = 0; i < slices; ++i) {
+            int a = j * (slices + 1) + i;
+            int b = a + 1;
+            int c = a + slices + 1;
+            int d = c + 1;
+            mesh.indices.push_back(a);
+            mesh.indices.push_back(c);
+            mesh.indices.push_back(b);
+            mesh.indices.push_back(b);
+            mesh.indices.push_back(c);
+            mesh.indices.push_back(d);
+          }
+        }
+        if (!mesh.positions.empty() && !mesh.indices.empty())
+          scene.meshes.push_back(std::move(mesh));
       } else {
         while (tok.peek().kind == Token::STRING)
           parse_param(tok);
@@ -383,7 +433,25 @@ PbrtScene parse_pbrt_file(const std::string &path)
           tex.filename = pv.strings[0];
       }
       scene.textures[tex.name] = tex;
-    } else if (t.text == "Material" || t.text == "LightSource"
+    } else if (t.text == "LightSource") {
+      Token type = tok.next();
+      if (type.text == "infinite") {
+        scene.has_env_map = true;
+        std::memcpy(scene.env_map_transform, state.transform, 16 * sizeof(float));
+        while (tok.peek().kind == Token::STRING) {
+          auto pv = parse_param(tok);
+          if (pv.name == "filename" && !pv.strings.empty())
+            scene.env_map_filename = pv.strings[0];
+          else if (pv.name == "scale" && pv.floats.size() >= 3)
+            scene.env_map_scale = (pv.floats[0] + pv.floats[1] + pv.floats[2]) / 3.f;
+          else if (pv.name == "L" && pv.floats.size() >= 3)
+            scene.env_map_scale = (pv.floats[0] + pv.floats[1] + pv.floats[2]) / 3.f;
+        }
+      } else {
+        while (tok.peek().kind == Token::STRING)
+          parse_param(tok);
+      }
+    } else if (t.text == "Material"
                || t.text == "ConcatTransform" || t.text == "ReverseOrientation"
                || t.text == "TransformBegin" || t.text == "TransformEnd"
                || t.text == "ObjectBegin" || t.text == "ObjectEnd"
