@@ -253,6 +253,15 @@ RenderResult PathTracer::render() const
 
             throughput(idx) = throughput(idx) * (bs.f * (1.f / bs.pdf));
 
+            {
+              const Vec3 tp = throughput(idx);
+              const f32 max_clamp = 10.f;
+              if (tp.x > max_clamp || tp.y > max_clamp || tp.z > max_clamp) {
+                const f32 m = Kokkos::fmax(tp.x, Kokkos::fmax(tp.y, tp.z));
+                throughput(idx) = tp * (max_clamp / m);
+              }
+            }
+
             const Vec3 wi = normalize(bs.wi);
             const bool entering = dot(wi, hr.normal) < 0.f;
             const Vec3 offset = entering ? hr.normal * -1e-3f : hr.normal * 1e-3f;
