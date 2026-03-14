@@ -77,15 +77,12 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
 
   const uint64_t total_verts = total_tris * 3;
 
-  bool any_textured = false;
-  for (const auto &mesh : pbrt.meshes) {
-    auto mit = pbrt.named_materials.find(mesh.material_name);
-    if (mit != pbrt.named_materials.end() && !mit->second.reflectance_texture.empty()) {
-      auto tit = pbrt.textures.find(mit->second.reflectance_texture);
-      if (tit != pbrt.textures.end() && !tit->second.data.empty()) {
-        any_textured = true;
-        break;
-      }
+  std::map<std::string, i32> tex_name_to_id;
+  std::vector<const PbrtTexture *> tex_list;
+  for (const auto &[name, tex] : pbrt.textures) {
+    if (!tex.data.empty() && tex.width > 0 && tex.height > 0) {
+      tex_name_to_id[name] = i32(tex_list.size());
+      tex_list.push_back(&tex);
     }
   }
 
@@ -95,19 +92,14 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
   tm.material_ids = Kokkos::View<u32 *>("mat_id", total_tris);
   tm.albedo_per_prim = Kokkos::View<Vec3 *>("alb", total_tris);
   tm.normals = Kokkos::View<Vec3 *>("normals", total_verts);
-  if (any_textured)
-    tm.vertex_colors = Kokkos::View<Vec3 *>("vcol", total_verts);
+  tm.texcoords = Kokkos::View<Vec2 *>("uv", total_verts);
 
   auto pos_h = Kokkos::create_mirror_view(tm.positions);
   auto idx_h = Kokkos::create_mirror_view(tm.indices);
   auto mat_id_h = Kokkos::create_mirror_view(tm.material_ids);
   auto alb_h = Kokkos::create_mirror_view(tm.albedo_per_prim);
   auto nrm_h = Kokkos::create_mirror_view(tm.normals);
-  decltype(Kokkos::create_mirror_view(tm.vertex_colors)) vcol_h;
-  if (any_textured) {
-    vcol_h = Kokkos::create_mirror_view(tm.vertex_colors);
-    Kokkos::deep_copy(vcol_h, Vec3{-1.f, -1.f, -1.f});
-  }
+  auto uv_h = Kokkos::create_mirror_view(tm.texcoords);
 
   std::vector<Material> materials_cpu;
   std::vector<Light> lights_cpu;
@@ -121,6 +113,12 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
     mat_name_to_id[name] = id;
 
     Material m{};
+    if (!pmat.reflectance_texture.empty()) {
+      auto tit = tex_name_to_id.find(pmat.reflectance_texture);
+      if (tit != tex_name_to_id.end())
+        m.base_color_tex = tit->second;
+    }
+
     if (pmat.type == "diffuse") {
       m.base_color = {pmat.reflectance.x, pmat.reflectance.y, pmat.reflectance.z};
       m.roughness = 1.f;
@@ -184,15 +182,6 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
     if (it != mat_name_to_id.end())
       mat_id = it->second;
 
-    const PbrtTexture *tex_ptr = nullptr;
-    {
-      auto mit = pbrt.named_materials.find(mesh.material_name);
-      if (mit != pbrt.named_materials.end() && !mit->second.reflectance_texture.empty()) {
-        auto tit = pbrt.textures.find(mit->second.reflectance_texture);
-        if (tit != pbrt.textures.end() && !tit->second.data.empty())
-          tex_ptr = &tit->second;
-      }
-    }
     const bool has_uvs = mesh.uvs.size() >= (mesh.positions.size() / 3) * 2;
 
     if (mesh.is_emissive) {
@@ -243,13 +232,10 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
         nrm_h(vert_off + 2) = face_n;
       }
 
-      if (tex_ptr && has_uvs) {
-        float u0 = mesh.uvs[i0 * 2], v0 = mesh.uvs[i0 * 2 + 1];
-        float u1 = mesh.uvs[i1 * 2], v1 = mesh.uvs[i1 * 2 + 1];
-        float u2 = mesh.uvs[i2 * 2], v2 = mesh.uvs[i2 * 2 + 1];
-        vcol_h(vert_off + 0) = sample_texture(*tex_ptr, u0, v0);
-        vcol_h(vert_off + 1) = sample_texture(*tex_ptr, u1, v1);
-        vcol_h(vert_off + 2) = sample_texture(*tex_ptr, u2, v2);
+      if (has_uvs) {
+        uv_h(vert_off + 0) = {mesh.uvs[i0 * 2], mesh.uvs[i0 * 2 + 1]};
+        uv_h(vert_off + 1) = {mesh.uvs[i1 * 2], mesh.uvs[i1 * 2 + 1]};
+        uv_h(vert_off + 2) = {mesh.uvs[i2 * 2], mesh.uvs[i2 * 2 + 1]};
       }
 
       mat_id_h(tri_off) = mat_id;
@@ -271,8 +257,7 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
   Kokkos::deep_copy(tm.material_ids, mat_id_h);
   Kokkos::deep_copy(tm.albedo_per_prim, alb_h);
   Kokkos::deep_copy(tm.normals, nrm_h);
-  if (any_textured)
-    Kokkos::deep_copy(tm.vertex_colors, vcol_h);
+  Kokkos::deep_copy(tm.texcoords, uv_h);
 
   Scene &scene = result.scene;
   scene.mesh = tm;
@@ -285,6 +270,41 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
       mats_host(i) = materials_cpu[i];
     scene.materials = Kokkos::View<Material *>("materials", scene.material_count);
     Kokkos::deep_copy(scene.materials, mats_host);
+  }
+
+  if (!tex_list.empty()) {
+    scene.textures.count = u32(tex_list.size());
+
+    size_t total_pixels = 0;
+    for (const auto *src : tex_list)
+      total_pixels += size_t(src->width) * size_t(src->height);
+
+    scene.textures.pixels = Kokkos::View<Vec3 *>("tex_pixels", total_pixels);
+    scene.textures.infos = Kokkos::View<TextureInfo *>("tex_infos", scene.textures.count);
+
+    auto pix_h = Kokkos::create_mirror_view(scene.textures.pixels);
+    auto info_h = Kokkos::create_mirror_view(scene.textures.infos);
+
+    u32 pixel_offset = 0;
+    for (u32 ti = 0; ti < scene.textures.count; ++ti) {
+      const PbrtTexture *src = tex_list[ti];
+      info_h(ti).offset = pixel_offset;
+      info_h(ti).width = u32(src->width);
+      info_h(ti).height = u32(src->height);
+
+      for (u32 y = 0; y < u32(src->height); ++y)
+        for (u32 x = 0; x < u32(src->width); ++x) {
+          size_t si = (size_t(y) * src->width + x) * 3;
+          pix_h(pixel_offset + y * u32(src->width) + x) =
+              {src->data[si], src->data[si + 1], src->data[si + 2]};
+        }
+      pixel_offset += u32(src->width) * u32(src->height);
+    }
+
+    Kokkos::deep_copy(scene.textures.pixels, pix_h);
+    Kokkos::deep_copy(scene.textures.infos, info_h);
+    std::fprintf(stderr, "  Uploaded %u textures (%zu pixels, %.1f MB) to GPU\n",
+        scene.textures.count, total_pixels, float(total_pixels * sizeof(Vec3)) / (1024.f * 1024.f));
   }
 
   if (!emissive_prim_ids.empty()) {

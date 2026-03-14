@@ -120,6 +120,7 @@ RenderResult PathTracer::render() const
 
       const auto materials = scene.materials;
       const auto lights = scene.lights;
+      const auto scene_textures = scene.textures;
       const u32 light_count = scene.light_count;
       const bool has_env_map = scene.env_map.has_value();
       const EnvironmentMap env_map_val = has_env_map ? scene.env_map.value() : EnvironmentMap{};
@@ -164,8 +165,9 @@ RenderResult PathTracer::render() const
 
             Material mat = materials.extent(0) ? materials(hr.material_id) : Material{};
 
-            // Override material base_color with interpolated per-vertex color
-            if (hr.has_interpolated_color) {
+            if (mat.base_color_tex >= 0) {
+              mat.base_color = scene_textures.sample(mat.base_color_tex, hr.uv.x, hr.uv.y);
+            } else if (hr.has_interpolated_color) {
               mat.base_color = hr.interpolated_color;
             }
 
