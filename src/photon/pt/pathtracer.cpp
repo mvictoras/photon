@@ -148,6 +148,13 @@ RenderResult PathTracer::render() const
       const auto lights = scene.lights;
       const auto scene_textures = scene.textures;
       const u32 light_count = scene.light_count;
+      const auto emissive_ids = scene.emissive_prim_ids;
+      const auto emissive_areas = scene.emissive_prim_areas;
+      const u32 emissive_count = scene.emissive_count;
+      const f32 total_emissive_area = scene.total_emissive_area;
+      const auto mesh_positions = scene.mesh.positions;
+      const auto mesh_indices = scene.mesh.indices;
+      const auto mesh_mat_ids = scene.mesh.material_ids;
       const bool has_env_map = scene.env_map.has_value();
       const EnvironmentMap env_map_val = has_env_map ? scene.env_map.value() : EnvironmentMap{};
 
@@ -270,6 +277,59 @@ RenderResult PathTracer::render() const
                   shadow_rays.directions(idx) = ls.wi;
                   shadow_rays.tmin(idx) = 1e-3f;
                   shadow_rays.tmax(idx) = ls.dist * 0.99f;
+                }
+              }
+
+              if (light_count == 0 && emissive_count > 0 && mat.roughness >= 0.001f && nee_active(idx) == 0u) {
+                const u32 ei = u32(rng.next_f32() * f32(emissive_count)) % emissive_count;
+                const u32 prim = emissive_ids(ei);
+                const u32 vi0 = mesh_indices(prim * 3 + 0);
+                const u32 vi1 = mesh_indices(prim * 3 + 1);
+                const u32 vi2 = mesh_indices(prim * 3 + 2);
+                const Vec3 ep0 = mesh_positions(vi0);
+                const Vec3 ep1 = mesh_positions(vi1);
+                const Vec3 ep2 = mesh_positions(vi2);
+
+                const f32 r1 = rng.next_f32();
+                const f32 r2 = rng.next_f32();
+                const f32 su = Kokkos::sqrt(r1);
+                const f32 b0 = 1.f - su;
+                const f32 b1 = r2 * su;
+                const Vec3 light_p = ep0 * b0 + ep1 * b1 + ep2 * (1.f - b0 - b1);
+
+                const Vec3 to_light = light_p - p;
+                const f32 dist_sq = dot(to_light, to_light);
+                const f32 dist = Kokkos::sqrt(dist_sq);
+                const Vec3 wi = to_light * (1.f / dist);
+
+                const Vec3 light_n = normalize(cross(ep1 - ep0, ep2 - ep0));
+                const f32 cos_light = -dot(wi, light_n);
+
+                if (cos_light > 0.f) {
+                  const f32 tri_area = emissive_areas(ei);
+                  const f32 pdf_area = 1.f / tri_area;
+                  const f32 pdf_solid = pdf_area * dist_sq / cos_light;
+                  const f32 inv_pick = f32(emissive_count);
+
+                  const Material emit_mat = materials(mesh_mat_ids.extent(0) > 0 ? mesh_mat_ids(prim) : 0u);
+                  const Vec3 Le = material_emission(emit_mat);
+
+                  const f32 nee_cos_shading = dot(wi, n);
+                  const Vec3 n_e = nee_cos_shading >= 0.f ? n : n * -1.f;
+                  const Vec3 sn_e = nee_cos_shading >= 0.f ? sn : sn * -1.f;
+                  const Vec3 wo_e = nee_cos_shading >= 0.f ? wo : wo * -1.f;
+
+                  const Vec3 f_e = disney_bsdf_eval(mat, wo_e, wi, n_e, sn_e);
+                  const f32 bsdf_pdf_e = disney_bsdf_pdf(mat, wo_e, wi, n_e, sn_e);
+                  const f32 w_mis_e = power_heuristic(1, pdf_solid / inv_pick, 1, bsdf_pdf_e);
+
+                  const Vec3 nee_e = throughput(idx) * f_e * Le * (w_mis_e * inv_pick / pdf_solid);
+                  nee_contrib(idx) = nee_e;
+                  nee_active(idx) = 1u;
+                  shadow_rays.origins(idx) = p;
+                  shadow_rays.directions(idx) = wi;
+                  shadow_rays.tmin(idx) = 1e-3f;
+                  shadow_rays.tmax(idx) = dist * 0.99f;
                 }
               }
 
