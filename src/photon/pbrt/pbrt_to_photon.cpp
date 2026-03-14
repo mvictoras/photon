@@ -104,8 +104,10 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
   auto alb_h = Kokkos::create_mirror_view(tm.albedo_per_prim);
   auto nrm_h = Kokkos::create_mirror_view(tm.normals);
   decltype(Kokkos::create_mirror_view(tm.vertex_colors)) vcol_h;
-  if (any_textured)
+  if (any_textured) {
     vcol_h = Kokkos::create_mirror_view(tm.vertex_colors);
+    Kokkos::deep_copy(vcol_h, Vec3{-1.f, -1.f, -1.f});
+  }
 
   std::vector<Material> materials_cpu;
   std::vector<Light> lights_cpu;

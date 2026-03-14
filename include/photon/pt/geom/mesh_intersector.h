@@ -87,10 +87,12 @@ KOKKOS_FUNCTION inline MeshHit intersect_mesh_bvh(const TriangleMesh &mesh, cons
 
         if (mesh.has_vertex_colors()) {
           const Vec3 vc0 = mesh.vertex_colors(i0);
-          const Vec3 vc1 = mesh.vertex_colors(i1);
-          const Vec3 vc2 = mesh.vertex_colors(i2);
-          best.interpolated_color = vc0 * w0 + vc1 * w1 + vc2 * w2;
-          best.has_interpolated_color = true;
+          if (vc0.x >= 0.f) {
+            const Vec3 vc1 = mesh.vertex_colors(i1);
+            const Vec3 vc2 = mesh.vertex_colors(i2);
+            best.interpolated_color = vc0 * w0 + vc1 * w1 + vc2 * w2;
+            best.has_interpolated_color = true;
+          }
         }
 
         if (mesh.has_material_ids()) {

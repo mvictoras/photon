@@ -416,7 +416,7 @@ void OptixBackend::trace_closest(const RayBatch &rays, HitBatch &hits)
 
       hr.material_id = m_mesh.has_material_ids() ? mat_h(pid) : 0u;
 
-      if (m_mesh.has_vertex_colors()) {
+      if (m_mesh.has_vertex_colors() && vc_h(i0).x >= 0.f) {
         hr.interpolated_color = vc_h(i0) * bw + vc_h(i1) * bu + vc_h(i2) * bv;
         hr.has_interpolated_color = true;
       }
