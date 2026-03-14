@@ -207,7 +207,7 @@ RenderResult PathTracer::render() const
                   shadow_rays.origins(idx) = p;
                   shadow_rays.directions(idx) = ls.wi;
                   shadow_rays.tmin(idx) = 1e-3f;
-                  shadow_rays.tmax(idx) = ls.dist - 1e-3f;
+                  shadow_rays.tmax(idx) = ls.dist * 0.99f;
                 }
               }
 
