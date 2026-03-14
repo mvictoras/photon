@@ -32,7 +32,7 @@ struct TextureAtlas
       return {1.f, 1.f, 1.f};
 
     u = u - Kokkos::floor(u);
-    v = v - Kokkos::floor(v);
+    v = 1.f - (v - Kokkos::floor(v));
 
     f32 fx = u * f32(ti.width) - 0.5f;
     f32 fy = v * f32(ti.height) - 0.5f;

@@ -165,7 +165,7 @@ RenderResult PathTracer::render() const
 
             Material mat = materials.extent(0) ? materials(hr.material_id) : Material{};
 
-            if (mat.base_color_tex >= 0) {
+            if (mat.base_color_tex >= 0 && scene_textures.count > 0) {
               mat.base_color = scene_textures.sample(mat.base_color_tex, hr.uv.x, hr.uv.y);
             } else if (hr.has_interpolated_color) {
               mat.base_color = hr.interpolated_color;
