@@ -415,6 +415,11 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
   float aspect = float(pbrt.width) / float(pbrt.height);
   result.camera = Camera::make_perspective(
       cam_pos, cam_pos + cam_dir, cam_up, pbrt.camera.fov, aspect);
+  if (pbrt.camera.lensradius > 0.f) {
+    result.camera.lens_radius = pbrt.camera.lensradius;
+    result.camera.focus_dist = pbrt.camera.focaldistance > 0.f
+        ? pbrt.camera.focaldistance : length(cam_dir);
+  }
 
   return result;
 }

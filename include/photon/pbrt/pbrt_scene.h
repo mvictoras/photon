@@ -50,6 +50,8 @@ struct PbrtTriMesh {
 struct PbrtCamera {
   std::string type{"perspective"};
   float fov{45.f};
+  float lensradius{0.f};
+  float focaldistance{0.f};
   float transform[16]{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
 };
 

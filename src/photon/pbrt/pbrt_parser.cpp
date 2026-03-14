@@ -255,6 +255,10 @@ PbrtScene parse_pbrt_file(const std::string &path)
         auto pv = parse_param(tok);
         if (pv.name == "fov" && !pv.floats.empty())
           scene.camera.fov = pv.floats[0];
+        else if (pv.name == "lensradius" && !pv.floats.empty())
+          scene.camera.lensradius = pv.floats[0];
+        else if (pv.name == "focaldistance" && !pv.floats.empty())
+          scene.camera.focaldistance = pv.floats[0];
       }
     } else if (t.text == "Transform") {
       Token bracket = tok.next();
