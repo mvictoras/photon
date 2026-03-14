@@ -28,7 +28,7 @@ struct PbrtMaterial {
   PbrtVec3 reflectance{0.5f, 0.5f, 0.5f};
   PbrtVec3 eta{0.f, 0.f, 0.f};
   PbrtVec3 k{0.f, 0.f, 0.f};
-  float roughness{0.5f};
+  float roughness{0.f};
   float uroughness{-1.f};
   float vroughness{-1.f};
   float eta_scalar{1.5f};
