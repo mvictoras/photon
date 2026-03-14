@@ -56,6 +56,11 @@ RenderResult PathTracer::render() const
   Kokkos::View<Vec3 *> accum("pt_accum", pixel_count);
   Kokkos::deep_copy(accum, Vec3{0.f, 0.f, 0.f});
 
+  Kokkos::View<Vec3 *> accum_sq("pt_accum_sq", pixel_count);
+  Kokkos::deep_copy(accum_sq, Vec3{0.f, 0.f, 0.f});
+  Kokkos::View<u32 *> pixel_samples("pt_pixel_spp", pixel_count);
+  Kokkos::deep_copy(pixel_samples, 0u);
+
   Kokkos::View<Vec3 *> aov_albedo("pt_aov_albedo", pixel_count);
   Kokkos::View<Vec3 *> aov_normal("pt_aov_normal", pixel_count);
   Kokkos::View<f32 *> aov_depth("pt_aov_depth", pixel_count);
@@ -89,6 +94,10 @@ RenderResult PathTracer::render() const
   Kokkos::View<Vec3 *> nee_contrib("pt_nee", pixel_count);
   Kokkos::View<u32 *> nee_active("pt_nee_active", pixel_count);
   Kokkos::View<u32 *> occluded("pt_occluded", pixel_count);
+  Kokkos::View<Vec3 *> sample_start("pt_sample_start", pixel_count);
+
+  const f32 adaptive_threshold = 0.01f;
+  const u32 adaptive_min_samples = 16u;
 
   for (u32 s = 0; s < spp; ++s) {
     Kokkos::parallel_for(
@@ -97,6 +106,22 @@ RenderResult PathTracer::render() const
         KOKKOS_LAMBDA(const int idx) {
           const u32 x = u32(idx) % w;
           const u32 y = u32(idx) / w;
+
+          if (s >= adaptive_min_samples) {
+            const u32 ns = pixel_samples(idx);
+            if (ns >= adaptive_min_samples) {
+              const Vec3 mean = accum(idx) * (1.f / f32(ns));
+              const Vec3 sq = accum_sq(idx) * (1.f / f32(ns));
+              const Vec3 var = sq - Vec3{mean.x * mean.x, mean.y * mean.y, mean.z * mean.z};
+              const f32 max_var = Kokkos::fmax(var.x, Kokkos::fmax(var.y, var.z));
+              const f32 lum = Kokkos::fmax(0.2126f * mean.x + 0.7152f * mean.y + 0.0722f * mean.z, 1e-4f);
+              if (max_var / (lum * lum) < adaptive_threshold) {
+                active(idx) = 0u;
+                rays.tmax(idx) = 0.f;
+                return;
+              }
+            }
+          }
 
           Rng rng(u32(1337u) ^ (u32(x) * 9781u) ^ (u32(y) * 6271u) ^ (s * 26699u));
           const f32 u = (f32(x) + rng.next_f32()) / f32(w - 1);
@@ -110,6 +135,7 @@ RenderResult PathTracer::render() const
 
           throughput(idx) = Vec3{1.f, 1.f, 1.f};
           active(idx) = 1u;
+          sample_start(idx) = accum(idx);
         });
 
     for (u32 bounce = 0; bounce < max_depth; ++bounce) {
@@ -169,6 +195,24 @@ RenderResult PathTracer::render() const
               mat.base_color = scene_textures.sample(mat.base_color_tex, hr.uv.x, hr.uv.y);
             } else if (hr.has_interpolated_color) {
               mat.base_color = hr.interpolated_color;
+            }
+
+            if (mat.normal_tex >= 0 && scene_textures.count > 0) {
+              Vec3 nm = scene_textures.sample(mat.normal_tex, hr.uv.x, hr.uv.y);
+              nm = nm * 2.f - Vec3{1.f, 1.f, 1.f};
+              Vec3 tangent{}, bitangent{};
+              onb_from_normal(sn, tangent, bitangent);
+              sn = normalize(tangent * nm.x + bitangent * nm.y + sn * nm.z);
+            }
+
+            if (mat.roughness_tex >= 0 && scene_textures.count > 0) {
+              Vec3 rt = scene_textures.sample(mat.roughness_tex, hr.uv.x, hr.uv.y);
+              mat.roughness = rt.x;
+            }
+
+            if (mat.metallic_tex >= 0 && scene_textures.count > 0) {
+              Vec3 mt = scene_textures.sample(mat.metallic_tex, hr.uv.x, hr.uv.y);
+              mat.metallic = mt.x;
             }
 
             if (bounce == 0 && aov_written(idx) == 0u) {
@@ -296,16 +340,28 @@ RenderResult PathTracer::render() const
             }
           });
     }
-  }
 
-  const f32 inv_spp = spp > 0 ? (1.f / f32(spp)) : 0.f;
+    Kokkos::parallel_for(
+        "pt_update_variance",
+        Kokkos::RangePolicy<>(0, int(pixel_count)),
+        KOKKOS_LAMBDA(const int idx) {
+          const Vec3 sample_val = accum(idx) - sample_start(idx);
+          accum_sq(idx) = accum_sq(idx) + Vec3{
+            sample_val.x * sample_val.x,
+            sample_val.y * sample_val.y,
+            sample_val.z * sample_val.z};
+          pixel_samples(idx) = pixel_samples(idx) + 1u;
+        });
+  }
 
   Kokkos::parallel_for(
       "pt_resolve",
       Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {int(h), int(w)}),
       KOKKOS_LAMBDA(const int y, const int x) {
         const int idx = y * int(w) + x;
-        out.color(y, x) = accum(idx) * inv_spp;
+        const u32 ns = pixel_samples(idx);
+        const f32 inv = ns > 0 ? (1.f / f32(ns)) : 0.f;
+        out.color(y, x) = accum(idx) * inv;
         out.depth(y, x) = aov_depth(idx);
         out.normal(y, x) = aov_normal(idx);
         out.albedo(y, x) = aov_albedo(idx);
