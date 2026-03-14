@@ -90,6 +90,19 @@ KOKKOS_FUNCTION inline Vec3 eval_diffuse(const Material &mat, f32 NoL)
   const f32 w = (1.f - mat.metallic) * (1.f - mat.transmission);
   if (w <= 0.f)
     return Vec3{0.f, 0.f, 0.f};
+
+  if (mat.subsurface > 0.f) {
+    const Vec3 diffuse = mat.base_color * (w * INV_PI * NoL);
+    const f32 Fss90 = 0.5f;
+    const f32 Fd90 = Fss90;
+    const f32 m = 1.f - NoL;
+    const f32 Fss = 1.f + (Fd90 - 1.f) * m * m * m * m * m;
+    const f32 ss = 1.25f * (Fss * (1.f / (NoL + 0.001f) - 0.5f) + 0.5f);
+    const Vec3 ss_color = lerp(mat.base_color, mat.subsurface_color, mat.subsurface);
+    const Vec3 subsurface_term = ss_color * (w * INV_PI * NoL * ss);
+    return lerp(diffuse, subsurface_term, mat.subsurface);
+  }
+
   return mat.base_color * (w * INV_PI * NoL);
 }
 
