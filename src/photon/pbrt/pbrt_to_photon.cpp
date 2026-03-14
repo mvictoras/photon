@@ -124,7 +124,16 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
       m.roughness = 1.f;
       m.metallic = 0.f;
     } else if (pmat.type == "conductor") {
-      m.base_color = {pmat.eta.x, pmat.eta.y, pmat.eta.z};
+      auto fresnel_f0 = [](float eta, float k) {
+        float num = (eta - 1.f) * (eta - 1.f) + k * k;
+        float den = (eta + 1.f) * (eta + 1.f) + k * k;
+        return den > 0.f ? num / den : 0.f;
+      };
+      m.base_color = {
+        fresnel_f0(pmat.eta.x, pmat.k.x),
+        fresnel_f0(pmat.eta.y, pmat.k.y),
+        fresnel_f0(pmat.eta.z, pmat.k.z)
+      };
       m.metallic = 1.f;
       float r = pmat.roughness;
       if (pmat.uroughness >= 0.f)
