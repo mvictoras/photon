@@ -42,6 +42,19 @@ KOKKOS_FUNCTION inline f32 D_ggx(f32 NoH, f32 a)
   return a2 / (PI * d * d);
 }
 
+KOKKOS_FUNCTION inline f32 D_ggx_aniso(f32 NoH, f32 XoH, f32 YoH, f32 ax, f32 ay)
+{
+  const f32 d = (XoH * XoH) / (ax * ax) + (YoH * YoH) / (ay * ay) + NoH * NoH;
+  return 1.f / (PI * ax * ay * d * d);
+}
+
+KOKKOS_FUNCTION inline void aniso_roughness(f32 roughness, f32 anisotropic, f32 &ax, f32 &ay)
+{
+  const f32 aspect = Kokkos::sqrt(1.f - 0.9f * anisotropic);
+  ax = Kokkos::fmax(roughness / aspect, 0.001f);
+  ay = Kokkos::fmax(roughness * aspect, 0.001f);
+}
+
 KOKKOS_FUNCTION inline f32 G1_smith(f32 NoV, f32 a)
 {
   const f32 a2 = a * a;
@@ -102,11 +115,25 @@ KOKKOS_FUNCTION inline Vec3 eval_specular_reflection(const Material &mat,
   Vec3 F0 = lerp(F0_dielectric, mat.base_color, mat.metallic);
 
   const Vec3 F = fresnel_schlick(VoH, F0);
-  const f32 D = D_ggx(NoH, a);
-  const f32 G = G_smith(NoV, NoL, a);
+
+  f32 D, G_val;
+  if (mat.anisotropic > 0.f) {
+    f32 ax, ay;
+    aniso_roughness(a, mat.anisotropic, ax, ay);
+    Vec3 tangent{}, bitangent{};
+    onb_from_normal(n, tangent, bitangent);
+    const f32 XoH = dot(tangent, h);
+    const f32 YoH = dot(bitangent, h);
+    D = D_ggx_aniso(NoH, XoH, YoH, ax, ay);
+    G_val = G_smith(NoV, NoL, ax) * G_smith(NoV, NoL, ay);
+    G_val = Kokkos::sqrt(G_val);
+  } else {
+    D = D_ggx(NoH, a);
+    G_val = G_smith(NoV, NoL, a);
+  }
 
   const f32 denom = 4.f * Kokkos::fmax(NoV, 1e-7f);
-  return F * (D * G * NoL / denom);
+  return F * (D * G_val * NoL / denom);
 }
 
 KOKKOS_FUNCTION inline Vec3 eval_sheen(const Material &mat, const Vec3 &wo,
