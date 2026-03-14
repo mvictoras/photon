@@ -93,8 +93,13 @@ KOKKOS_FUNCTION inline Vec3 eval_specular_reflection(const Material &mat,
   const f32 VoH = saturate(dot(wo, h));
 
   const f32 f0d = dielectric_f0(mat.ior);
-  Vec3 F0 = Vec3{f0d, f0d, f0d};
-  F0 = lerp(F0, mat.base_color, mat.metallic);
+  Vec3 F0_dielectric = Vec3{f0d, f0d, f0d};
+  if (mat.specular_tint > 0.f) {
+    const f32 lum = 0.2126f * mat.base_color.x + 0.7152f * mat.base_color.y + 0.0722f * mat.base_color.z;
+    const Vec3 c_tint = lum > 0.f ? mat.base_color * (1.f / lum) : Vec3{1.f, 1.f, 1.f};
+    F0_dielectric = lerp(F0_dielectric, c_tint * f0d, mat.specular_tint);
+  }
+  Vec3 F0 = lerp(F0_dielectric, mat.base_color, mat.metallic);
 
   const Vec3 F = fresnel_schlick(VoH, F0);
   const f32 D = D_ggx(NoH, a);
@@ -102,6 +107,28 @@ KOKKOS_FUNCTION inline Vec3 eval_specular_reflection(const Material &mat,
 
   const f32 denom = 4.f * Kokkos::fmax(NoV, 1e-7f);
   return F * (D * G * NoL / denom);
+}
+
+KOKKOS_FUNCTION inline Vec3 eval_sheen(const Material &mat, const Vec3 &wo,
+    const Vec3 &wi, const Vec3 &n)
+{
+  if (mat.sheen <= 0.f || mat.metallic >= 1.f)
+    return Vec3{0.f, 0.f, 0.f};
+
+  const Vec3 h = normalize(wi + wo);
+  const f32 HoL = Kokkos::fabs(dot(h, wi));
+
+  const f32 lum = 0.2126f * mat.base_color.x + 0.7152f * mat.base_color.y + 0.0722f * mat.base_color.z;
+  const Vec3 c_tint = lum > 0.f ? mat.base_color * (1.f / lum) : Vec3{1.f, 1.f, 1.f};
+  const Vec3 c_sheen = lerp(Vec3{1.f, 1.f, 1.f}, c_tint, mat.sheen_tint);
+
+  const f32 m = 1.f - HoL;
+  const f32 m2 = m * m;
+  const f32 m5 = m2 * m2 * m;
+
+  const f32 NoL = saturate(dot(n, wi));
+  const f32 w = (1.f - mat.metallic) * (1.f - mat.transmission);
+  return c_sheen * (mat.sheen * m5 * w * NoL);
 }
 
 KOKKOS_FUNCTION inline Vec3 eval_clearcoat(const Material &mat, const Vec3 &wo,
@@ -146,6 +173,7 @@ KOKKOS_FUNCTION inline Vec3 disney_bsdf_eval(const Material &mat, const Vec3 &wo
 
   Vec3 f = eval_diffuse(mat, NoL);
   f += eval_specular_reflection(mat, wo, wi, shading_n, a);
+  f += eval_sheen(mat, wo, wi, shading_n);
   f += eval_clearcoat(mat, wo, wi, shading_n);
   return f;
 }
@@ -290,9 +318,10 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
   }
 
   if (xi < p_diffuse + p_specular + p_transmission && mat.transmission > 0.f) {
+    const Vec3 nn = front_face ? n : n * -1.f;
+    const f32 eta = front_face ? (1.f / mat.ior) : mat.ior;
+
     if (mat.roughness < 0.1f) {
-      const Vec3 nn = front_face ? n : n * -1.f;
-      const f32 eta = front_face ? (1.f / mat.ior) : mat.ior;
       const Vec3 wt = refract(-wo, nn, eta);
       if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f) {
         out.wi = reflect(-wo, nn);
@@ -305,12 +334,22 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
       return out;
     }
 
-    const Vec3 nn = front_face ? shading_n : shading_n * -1.f;
-    out.wi = reflect(-wo, nn);
-    if (dot(out.wi, nn) <= 0.f)
-      return BsdfSample{};
-    out.f = disney_bsdf_eval(mat, wo, out.wi, n, shading_n);
-    out.pdf = disney_bsdf_pdf(mat, wo, out.wi, n, shading_n);
+    const Vec3 sn_t = front_face ? shading_n : shading_n * -1.f;
+    const Vec3 h = sample_ggx_half_vector(sn_t, rough, rng);
+    const Vec3 wt = refract(-wo, h, eta);
+    if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f) {
+      out.wi = reflect(-wo, h);
+      if (dot(out.wi, nn) <= 0.f)
+        return BsdfSample{};
+      out.f = disney_bsdf_eval(mat, wo, out.wi, n, shading_n);
+      out.pdf = disney_bsdf_pdf(mat, wo, out.wi, n, shading_n);
+    } else {
+      out.wi = wt;
+      out.f = mat.base_color;
+      const f32 NoH = saturate(Kokkos::fabs(dot(sn_t, h)));
+      const f32 VoH = saturate(Kokkos::fabs(dot(wo, h)));
+      out.pdf = Kokkos::fmax(D_ggx(NoH, rough) * NoH / (4.f * Kokkos::fmax(VoH, 1e-7f)), 1e-7f);
+    }
     return out;
   }
 

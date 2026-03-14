@@ -17,16 +17,22 @@ struct Material {
   f32 specular{0.5f};
   f32 clearcoat{0.f};
   f32 clearcoat_roughness{0.03f};
+  f32 sheen{0.f};
+  f32 sheen_tint{0.5f};
+  f32 specular_tint{0.f};
+  f32 anisotropic{0.f};
   Vec3 emission{0.f, 0.f, 0.f};
   f32 emission_strength{0.f};
   f32 subsurface{0.f};
   Vec3 subsurface_color{1.f, 1.f, 1.f};
   f32 subsurface_radius{1.f};
+  f32 alpha{1.f};
   i32 base_color_tex{-1};
   i32 normal_tex{-1};
   i32 roughness_tex{-1};
   i32 metallic_tex{-1};
   i32 emission_tex{-1};
+  i32 alpha_tex{-1};
 };
 
 KOKKOS_FUNCTION inline Vec3 material_emission(const Material &mat)
