@@ -253,7 +253,7 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
       mat_id_h(tri_off) = mat_id;
       alb_h(tri_off) = materials_cpu[mat_id].base_color;
 
-      if (mesh.is_emissive) {
+    if (mesh.is_emissive) {
         emissive_prim_ids.push_back(u32(tri_off));
         f32 area = 0.5f * length(cross(p1 - p0, p2 - p0));
         emissive_prim_areas.push_back(area);

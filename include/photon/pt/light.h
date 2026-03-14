@@ -108,7 +108,7 @@ KOKKOS_FUNCTION inline LightSample sample_light(const Light &light, const Vec3 &
     const f32 pdf_area = 1.f / light_area;
     const f32 pdf_solid = pdf_area * (dist * dist) / cos_light;
     const Vec3 Le = light.color * light.intensity;
-    return {wi, Le, pdf_solid, dist - 1e-4f, false};
+    return {wi, Le, pdf_solid, dist * 0.999f, false};
   }
 
   return {Vec3{0.f, 1.f, 0.f}, Vec3{0.f, 0.f, 0.f}, 0.f, 0.f, false};

@@ -121,6 +121,19 @@ ParamValue parse_param(Tokenizer &tok)
   }
 
   Token bracket = tok.peek();
+  if (bracket.kind == Token::STRING && (pv.type == "string" || pv.type == "texture")) {
+    tok.next();
+    pv.strings.push_back(bracket.text);
+    return pv;
+  }
+  if (bracket.kind == Token::NUMBER && (pv.type == "float" || pv.type == "integer" || pv.type == "bool")) {
+    tok.next();
+    if (pv.type == "integer" || pv.type == "bool")
+      pv.ints.push_back(int(bracket.num));
+    else
+      pv.floats.push_back(bracket.num);
+    return pv;
+  }
   if (bracket.kind != Token::LBRACKET)
     return pv;
 
