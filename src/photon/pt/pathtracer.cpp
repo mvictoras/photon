@@ -182,6 +182,22 @@ RenderResult PathTracer::render() const
             Vec3 sn = hr.shading_normal;
 
             Material mat_pre = materials.extent(0) ? materials(hr.material_id) : Material{};
+
+            f32 alpha_val = mat_pre.alpha;
+            if (mat_pre.alpha_tex >= 0 && scene_textures.count > 0) {
+              alpha_val = scene_textures.sample(mat_pre.alpha_tex, hr.uv.x, hr.uv.y).x;
+            }
+
+            if (alpha_val < 1.f) {
+              Rng alpha_rng(u32(1337u) ^ (u32(idx) * 7919u) ^ (bounce * 6271u) ^ (s * 26699u));
+              if (alpha_rng.next_f32() > alpha_val) {
+                rays.origins(idx) = p;
+                rays.tmin(idx) = 1e-3f;
+                rays.tmax(idx) = 1e30f;
+                return;
+              }
+            }
+
             const bool is_transmissive = mat_pre.transmission > 0.f;
 
             if (!is_transmissive && dot(n, wo) < 0.f) {

@@ -355,6 +355,8 @@ PbrtScene parse_pbrt_file(const std::string &path)
           auto pv = parse_param(tok);
           if (pv.name == "filename" && !pv.strings.empty())
             ply_filename = pv.strings[0];
+          else if (pv.name == "alpha" && pv.type == "texture" && !pv.strings.empty())
+            mesh.alpha_texture = pv.strings[0];
         }
         if (!ply_filename.empty()) {
           std::string ply_path = base_dir + ply_filename;

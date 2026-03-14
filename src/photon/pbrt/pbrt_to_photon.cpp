@@ -184,6 +184,16 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
 
     const bool has_uvs = mesh.uvs.size() >= (mesh.positions.size() / 3) * 2;
 
+    if (!mesh.alpha_texture.empty()) {
+      auto ait = tex_name_to_id.find(mesh.alpha_texture);
+      if (ait != tex_name_to_id.end()) {
+        Material alpha_mat = materials_cpu[mat_id];
+        alpha_mat.alpha_tex = ait->second;
+        mat_id = u32(materials_cpu.size());
+        materials_cpu.push_back(alpha_mat);
+      }
+    }
+
     if (mesh.is_emissive) {
       Material emit_mat{};
       emit_mat.base_color = {0.f, 0.f, 0.f};

@@ -41,6 +41,7 @@ struct PbrtTriMesh {
   std::vector<float> normals;
   std::vector<float> uvs;
   std::string material_name;
+  std::string alpha_texture;
   PbrtVec3 emission{0, 0, 0};
   bool is_emissive{false};
   float transform[16]{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
