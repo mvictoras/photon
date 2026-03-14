@@ -158,6 +158,21 @@ struct ParseState {
   bool in_area_light{false};
 };
 
+// sRGB approximations of measured spectral data for common metals
+PbrtVec3 lookup_named_spectrum(const std::string &name) {
+  if (name == "metal-Ag-eta") return {0.155f, 0.116f, 0.138f};
+  if (name == "metal-Ag-k")   return {4.828f, 3.122f, 2.146f};
+  if (name == "metal-Au-eta") return {0.143f, 0.374f, 1.442f};
+  if (name == "metal-Au-k")   return {3.983f, 2.387f, 1.603f};
+  if (name == "metal-Cu-eta") return {0.200f, 0.924f, 1.102f};
+  if (name == "metal-Cu-k")   return {3.912f, 2.452f, 2.142f};
+  if (name == "metal-Al-eta") return {1.345f, 0.965f, 0.612f};
+  if (name == "metal-Al-k")   return {7.474f, 6.400f, 5.275f};
+  if (name == "metal-Fe-eta") return {2.912f, 2.950f, 2.584f};
+  if (name == "metal-Fe-k")   return {3.070f, 2.930f, 2.771f};
+  return {0.f, 0.f, 0.f};
+}
+
 }
 
 PbrtScene parse_pbrt_file(const std::string &path)
@@ -262,12 +277,18 @@ PbrtScene parse_pbrt_file(const std::string &path)
         else if (pv.name == "roughness" && !pv.floats.empty())
           mat.roughness = pv.floats[0];
         else if (pv.name == "eta") {
-          if (pv.floats.size() >= 3)
+          if (!pv.strings.empty())
+            mat.eta = lookup_named_spectrum(pv.strings[0]);
+          else if (pv.floats.size() >= 3)
             mat.eta = {pv.floats[0], pv.floats[1], pv.floats[2]};
           else if (pv.floats.size() == 1)
             mat.eta_scalar = pv.floats[0];
-        } else if (pv.name == "k" && pv.floats.size() >= 3)
-          mat.k = {pv.floats[0], pv.floats[1], pv.floats[2]};
+        } else if (pv.name == "k") {
+          if (!pv.strings.empty())
+            mat.k = lookup_named_spectrum(pv.strings[0]);
+          else if (pv.floats.size() >= 3)
+            mat.k = {pv.floats[0], pv.floats[1], pv.floats[2]};
+        }
         else if ((pv.name == "uroughness") && !pv.floats.empty())
           mat.uroughness = pv.floats[0];
         else if ((pv.name == "vroughness") && !pv.floats.empty())
