@@ -332,7 +332,9 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
 
   if (xi < p_diffuse + p_specular) {
     if (mat.roughness < 0.001f) {
-      out.wi = reflect(-wo, n);
+      out.wi = reflect(-wo, shading_n);
+      if (dot(out.wi, n) <= 0.f)
+        out.wi = reflect(-wo, n);
       if (dot(out.wi, n) <= 0.f)
         return BsdfSample{};
 
@@ -340,7 +342,7 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
       Vec3 F0{f0d, f0d, f0d};
       F0 = lerp(F0, mat.base_color, mat.metallic);
 
-      const Vec3 F = fresnel_schlick(saturate(dot(wo, n)), F0);
+      const Vec3 F = fresnel_schlick(saturate(dot(wo, shading_n)), F0);
       out.f = F;
       out.pdf = 1.f;
       out.is_specular = true;
@@ -358,13 +360,17 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
   }
 
   if (xi < p_diffuse + p_specular + p_transmission && mat.transmission > 0.f) {
+    const Vec3 sn_face = front_face ? shading_n : shading_n * -1.f;
     const Vec3 nn = front_face ? n : n * -1.f;
     const f32 eta = front_face ? (1.f / mat.ior) : mat.ior;
 
     if (mat.roughness < 0.1f) {
-      const Vec3 wt = refract(-wo, nn, eta);
+      Vec3 wt = refract(-wo, sn_face, eta);
       if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f) {
-        out.wi = reflect(-wo, nn);
+        wt = refract(-wo, nn, eta);
+      }
+      if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f) {
+        out.wi = reflect(-wo, sn_face);
       } else {
         out.wi = wt;
       }
