@@ -188,26 +188,68 @@ PbrtVec3 lookup_named_spectrum(const std::string &name) {
 
 }
 
+static std::string resolve_dir(const std::string &path)
+{
+  auto s = path.find_last_of("/\\");
+  return (s != std::string::npos) ? path.substr(0, s + 1) : "";
+}
+
+static std::string g_root_dir;
+
+static std::string preprocess_includes(const std::string &path, int depth = 0)
+{
+  if (depth > 10)
+    return "";
+  std::ifstream f(path);
+  if (!f.is_open()) {
+    std::fprintf(stderr, "  Warning: cannot open %s\n", path.c_str());
+    return "";
+  }
+  std::string result;
+  std::string line;
+  while (std::getline(f, line)) {
+    std::string trimmed = line;
+    size_t start = trimmed.find_first_not_of(" \t");
+    if (start != std::string::npos)
+      trimmed = trimmed.substr(start);
+    if (trimmed.size() > 5 && (trimmed.compare(0, 7, "Include") == 0 || trimmed.compare(0, 6, "Import") == 0)) {
+      auto q1 = trimmed.find('"');
+      auto q2 = trimmed.rfind('"');
+      if (q1 != std::string::npos && q2 > q1) {
+        std::string rel = trimmed.substr(q1 + 1, q2 - q1 - 1);
+        std::string inc_file = g_root_dir + rel;
+        std::fprintf(stderr, "  Including: %s\n", inc_file.c_str());
+        result += preprocess_includes(inc_file, depth + 1);
+        continue;
+      }
+    }
+    result += line;
+    result += '\n';
+  }
+  return result;
+}
+
 PbrtScene parse_pbrt_file(const std::string &path)
 {
-  std::ifstream file(path);
-  if (!file.is_open())
-    throw std::runtime_error("Cannot open pbrt file: " + path);
-
-  std::string base_dir;
-  auto last_slash = path.find_last_of("/\\");
-  if (last_slash != std::string::npos)
-    base_dir = path.substr(0, last_slash + 1);
-
-  std::stringstream ss;
-  ss << file.rdbuf();
-  std::string content = ss.str();
+  std::string base_dir = resolve_dir(path);
+  g_root_dir = base_dir;
+  std::string content = preprocess_includes(path);
 
   Tokenizer tok(content);
   PbrtScene scene;
 
   std::stack<ParseState> state_stack;
   ParseState state;
+
+  std::map<std::string, std::vector<PbrtTriMesh>> object_defs;
+  std::string current_object;
+
+  auto add_mesh = [&](PbrtTriMesh &&m) {
+    if (!current_object.empty())
+      object_defs[current_object].push_back(std::move(m));
+    else
+      scene.meshes.push_back(std::move(m));
+  };
 
   for (int i = 0; i < 16; ++i)
     state.transform[i] = (i % 5 == 0) ? 1.f : 0.f;
@@ -344,20 +386,6 @@ PbrtScene parse_pbrt_file(const std::string &path)
     } else if (t.text == "Identity") {
       for (int i = 0; i < 16; ++i)
         state.transform[i] = (i % 5 == 0) ? 1.f : 0.f;
-    } else if (t.text == "Include") {
-      Token filename = tok.next();
-      std::string inc_path = base_dir + filename.text;
-      std::ifstream inc_file(inc_path);
-      if (inc_file.is_open()) {
-        std::stringstream inc_ss;
-        inc_ss << inc_file.rdbuf();
-        std::string inc_content = inc_ss.str();
-        content.insert(size_t(tok.p - content.data()), inc_content);
-        tok.end = content.data() + content.size();
-        std::fprintf(stderr, "  Included: %s (%zu bytes)\n", inc_path.c_str(), inc_content.size());
-      } else {
-        std::fprintf(stderr, "  Warning: cannot include %s\n", inc_path.c_str());
-      }
     } else if (t.text == "WorldBegin") {
       for (int i = 0; i < 16; ++i)
         state.transform[i] = (i % 5 == 0) ? 1.f : 0.f;
@@ -434,7 +462,7 @@ PbrtScene parse_pbrt_file(const std::string &path)
             mesh.uvs = std::move(pv.floats);
         }
         if (!mesh.positions.empty() && !mesh.indices.empty())
-          scene.meshes.push_back(std::move(mesh));
+          add_mesh(std::move(mesh));
       } else if (type.text == "plymesh") {
         PbrtTriMesh mesh;
         mesh.material_name = state.current_material;
@@ -454,7 +482,7 @@ PbrtScene parse_pbrt_file(const std::string &path)
         if (!ply_filename.empty()) {
           std::string ply_path = base_dir + ply_filename;
           if (load_ply(ply_path, mesh))
-            scene.meshes.push_back(std::move(mesh));
+            add_mesh(std::move(mesh));
           else
             std::fprintf(stderr, "Warning: failed to load PLY: %s\n", ply_path.c_str());
         }
@@ -507,7 +535,7 @@ PbrtScene parse_pbrt_file(const std::string &path)
           }
         }
         if (!mesh.positions.empty() && !mesh.indices.empty())
-          scene.meshes.push_back(std::move(mesh));
+          add_mesh(std::move(mesh));
       } else {
         while (tok.peek().kind == Token::STRING)
           parse_param(tok);
@@ -544,13 +572,27 @@ PbrtScene parse_pbrt_file(const std::string &path)
         while (tok.peek().kind == Token::STRING)
           parse_param(tok);
       }
+    } else if (t.text == "ObjectBegin") {
+      Token name = tok.next();
+      current_object = name.text;
+    } else if (t.text == "ObjectEnd") {
+      current_object.clear();
+    } else if (t.text == "ObjectInstance") {
+      Token name = tok.next();
+      auto it = object_defs.find(name.text);
+      if (it != object_defs.end()) {
+        for (const auto &obj_mesh : it->second) {
+          PbrtTriMesh m = obj_mesh;
+          std::memcpy(m.transform, state.transform, 16 * sizeof(float));
+          m.material_name = obj_mesh.material_name;
+          scene.meshes.push_back(std::move(m));
+        }
+      }
     } else if (t.text == "Material"
-               || t.text == "ConcatTransform" || t.text == "ReverseOrientation"
+               || t.text == "ReverseOrientation"
                || t.text == "TransformBegin" || t.text == "TransformEnd"
-               || t.text == "ObjectBegin" || t.text == "ObjectEnd"
-               || t.text == "ObjectInstance" || t.text == "Include"
                || t.text == "MediumInterface" || t.text == "MakeNamedMedium") {
-      if (t.text == "Material" || t.text == "LightSource"
+      if (t.text == "Material"
           || t.text == "MakeNamedMedium") {
         tok.next();
       }
