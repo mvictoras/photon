@@ -75,6 +75,9 @@ struct PbrtScene {
   float env_map_transform[16]{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
   float env_map_scale{1.f};
   bool has_env_map{false};
+
+  uint64_t max_instances_per_object{500};
+  uint64_t max_total_triangles{500000000};
 };
 
 }

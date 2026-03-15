@@ -243,12 +243,16 @@ PbrtScene parse_pbrt_file(const std::string &path)
 
   std::map<std::string, std::vector<PbrtTriMesh>> object_defs;
   std::string current_object;
+  std::map<std::string, uint64_t> instance_counts;
+  uint64_t total_triangles = 0;
 
   auto add_mesh = [&](PbrtTriMesh &&m) {
     if (!current_object.empty())
       object_defs[current_object].push_back(std::move(m));
-    else
+    else {
+      total_triangles += m.indices.size() / 3;
       scene.meshes.push_back(std::move(m));
+    }
   };
 
   for (int i = 0; i < 16; ++i)
@@ -579,14 +583,26 @@ PbrtScene parse_pbrt_file(const std::string &path)
       current_object.clear();
     } else if (t.text == "ObjectInstance") {
       Token name = tok.next();
+      if (total_triangles >= scene.max_total_triangles)
+        continue;
+      auto &ic = instance_counts[name.text];
+      if (ic >= scene.max_instances_per_object)
+        continue;
       auto it = object_defs.find(name.text);
       if (it != object_defs.end()) {
+        uint64_t obj_tris = 0;
+        for (const auto &obj_mesh : it->second)
+          obj_tris += obj_mesh.indices.size() / 3;
+        if (total_triangles + obj_tris > scene.max_total_triangles)
+          continue;
         for (const auto &obj_mesh : it->second) {
           PbrtTriMesh m = obj_mesh;
           std::memcpy(m.transform, state.transform, 16 * sizeof(float));
           m.material_name = obj_mesh.material_name;
           scene.meshes.push_back(std::move(m));
         }
+        total_triangles += obj_tris;
+        ic++;
       }
     } else if (t.text == "Material"
                || t.text == "ReverseOrientation"
