@@ -39,6 +39,41 @@ struct Mat4
     return r;
   }
 
+  static KOKKOS_FUNCTION Mat4 rotate(f32 angle_deg, const Vec3 &axis)
+  {
+    const f32 rad = angle_deg * 3.14159265358979323846f / 180.f;
+    const f32 c = Kokkos::cos(rad);
+    const f32 s = Kokkos::sin(rad);
+    const Vec3 a = normalize(axis);
+    const f32 t = 1.f - c;
+
+    Mat4 r{};
+    r.m[0][0] = t * a.x * a.x + c;
+    r.m[0][1] = t * a.x * a.y - s * a.z;
+    r.m[0][2] = t * a.x * a.z + s * a.y;
+    r.m[1][0] = t * a.x * a.y + s * a.z;
+    r.m[1][1] = t * a.y * a.y + c;
+    r.m[1][2] = t * a.y * a.z - s * a.x;
+    r.m[2][0] = t * a.x * a.z - s * a.y;
+    r.m[2][1] = t * a.y * a.z + s * a.x;
+    r.m[2][2] = t * a.z * a.z + c;
+    r.m[3][3] = 1.f;
+    return r;
+  }
+
+  static KOKKOS_FUNCTION Mat4 look_at(const Vec3 &eye, const Vec3 &target, const Vec3 &up)
+  {
+    const Vec3 fwd = normalize(target - eye);
+    const Vec3 right = normalize(cross(fwd, up));
+    const Vec3 new_up = cross(right, fwd);
+
+    Mat4 r = identity();
+    r.m[0][0] = right.x;   r.m[0][1] = new_up.x; r.m[0][2] = -fwd.x; r.m[0][3] = eye.x;
+    r.m[1][0] = right.y;   r.m[1][1] = new_up.y; r.m[1][2] = -fwd.y; r.m[1][3] = eye.y;
+    r.m[2][0] = right.z;   r.m[2][1] = new_up.z; r.m[2][2] = -fwd.z; r.m[2][3] = eye.z;
+    return r;
+  }
+
   KOKKOS_FUNCTION Vec3 transform_point(const Vec3 &p) const
   {
     const f32 x = m[0][0] * p.x + m[0][1] * p.y + m[0][2] * p.z + m[0][3];

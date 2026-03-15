@@ -269,6 +269,95 @@ PbrtScene parse_pbrt_file(const std::string &path)
         }
         tok.next();
       }
+    } else if (t.text == "LookAt") {
+      float vals[9];
+      for (int i = 0; i < 9; ++i) {
+        Token v = tok.next();
+        vals[i] = v.num;
+      }
+      scene.camera.look_from = {vals[0], vals[1], vals[2]};
+      scene.camera.look_at_pt = {vals[3], vals[4], vals[5]};
+      scene.camera.look_up = {vals[6], vals[7], vals[8]};
+      scene.camera.has_lookat = true;
+    } else if (t.text == "Scale") {
+      float sx = tok.next().num, sy = tok.next().num, sz = tok.next().num;
+      float scale_m[16]{sx,0,0,0, 0,sy,0,0, 0,0,sz,0, 0,0,0,1};
+      float result[16];
+      auto mul = [](const float *a, const float *b, float *r) {
+        for (int i = 0; i < 4; ++i)
+          for (int j = 0; j < 4; ++j) {
+            float s = 0;
+            for (int k = 0; k < 4; ++k)
+              s += a[i*4+k] * b[k*4+j];
+            r[i*4+j] = s;
+          }
+      };
+      mul(state.transform, scale_m, result);
+      std::memcpy(state.transform, result, 64);
+      scene.camera.scale[0] *= sx;
+      scene.camera.scale[1] *= sy;
+      scene.camera.scale[2] *= sz;
+    } else if (t.text == "Rotate") {
+      float angle = tok.next().num;
+      float ax = tok.next().num, ay = tok.next().num, az = tok.next().num;
+      float len = std::sqrt(ax*ax + ay*ay + az*az);
+      if (len > 0.f) { ax /= len; ay /= len; az /= len; }
+      float rad = angle * 3.14159265f / 180.f;
+      float c = std::cos(rad), s = std::sin(rad), t2 = 1.f - c;
+      float rot[16]{
+        t2*ax*ax+c, t2*ax*ay-s*az, t2*ax*az+s*ay, 0,
+        t2*ax*ay+s*az, t2*ay*ay+c, t2*ay*az-s*ax, 0,
+        t2*ax*az-s*ay, t2*ay*az+s*ax, t2*az*az+c, 0,
+        0,0,0,1};
+      float result[16];
+      auto mul = [](const float *a, const float *b, float *r) {
+        for (int i = 0; i < 4; ++i)
+          for (int j = 0; j < 4; ++j) {
+            float sv = 0;
+            for (int k = 0; k < 4; ++k)
+              sv += a[i*4+k] * b[k*4+j];
+            r[i*4+j] = sv;
+          }
+      };
+      mul(state.transform, rot, result);
+      std::memcpy(state.transform, result, 64);
+    } else if (t.text == "ConcatTransform") {
+      Token bracket = tok.next();
+      if (bracket.kind == Token::LBRACKET) {
+        float concat[16];
+        for (int i = 0; i < 16; ++i)
+          concat[i] = tok.next().num;
+        tok.next();
+        float result[16];
+        auto mul = [](const float *a, const float *b, float *r) {
+          for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j) {
+              float sv = 0;
+              for (int k = 0; k < 4; ++k)
+                sv += a[i*4+k] * b[k*4+j];
+              r[i*4+j] = sv;
+            }
+        };
+        mul(state.transform, concat, result);
+        std::memcpy(state.transform, result, 64);
+      }
+    } else if (t.text == "Identity") {
+      for (int i = 0; i < 16; ++i)
+        state.transform[i] = (i % 5 == 0) ? 1.f : 0.f;
+    } else if (t.text == "Include") {
+      Token filename = tok.next();
+      std::string inc_path = base_dir + filename.text;
+      std::ifstream inc_file(inc_path);
+      if (inc_file.is_open()) {
+        std::stringstream inc_ss;
+        inc_ss << inc_file.rdbuf();
+        std::string inc_content = inc_ss.str();
+        content.insert(size_t(tok.p - content.data()), inc_content);
+        tok.end = content.data() + content.size();
+        std::fprintf(stderr, "  Included: %s (%zu bytes)\n", inc_path.c_str(), inc_content.size());
+      } else {
+        std::fprintf(stderr, "  Warning: cannot include %s\n", inc_path.c_str());
+      }
     } else if (t.text == "WorldBegin") {
       for (int i = 0; i < 16; ++i)
         state.transform[i] = (i % 5 == 0) ? 1.f : 0.f;

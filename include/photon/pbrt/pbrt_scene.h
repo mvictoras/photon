@@ -53,6 +53,11 @@ struct PbrtCamera {
   float lensradius{0.f};
   float focaldistance{0.f};
   float transform[16]{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+  PbrtVec3 look_from{0,0,0};
+  PbrtVec3 look_at_pt{0,0,1};
+  PbrtVec3 look_up{0,1,0};
+  float scale[3]{1,1,1};
+  bool has_lookat{false};
 };
 
 struct PbrtScene {
