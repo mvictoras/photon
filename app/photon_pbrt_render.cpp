@@ -23,6 +23,8 @@ struct Args {
   int height = -1;
   int spp = -1;
   int max_depth = -1;
+  int64_t max_instances = -1;
+  int64_t max_triangles = -1;
 };
 
 Args parse_args(int argc, char **argv)
@@ -40,6 +42,10 @@ Args parse_args(int argc, char **argv)
       a.spp = std::atoi(argv[++i]);
     else if (arg == "--max-depth" && i + 1 < argc)
       a.max_depth = std::atoi(argv[++i]);
+    else if (arg == "--max-instances" && i + 1 < argc)
+      a.max_instances = std::atoll(argv[++i]);
+    else if (arg == "--max-triangles" && i + 1 < argc)
+      a.max_triangles = std::atoll(argv[++i]);
     else if (arg[0] != '-')
       a.scene_path = arg;
   }
@@ -97,6 +103,8 @@ int main(int argc, char **argv)
     if (args.height > 0) pbrt_scene.height = args.height;
     if (args.spp > 0) pbrt_scene.spp = args.spp;
     if (args.max_depth > 0) pbrt_scene.max_depth = args.max_depth;
+    if (args.max_instances > 0) pbrt_scene.max_instances_per_object = uint64_t(args.max_instances);
+    if (args.max_triangles > 0) pbrt_scene.max_total_triangles = uint64_t(args.max_triangles);
 
     std::fprintf(stderr, "Parsed in %.1f ms: %zu meshes, %zu materials, %dx%d @ %d spp\n",
         parse_ms, pbrt_scene.meshes.size(), pbrt_scene.named_materials.size(),
