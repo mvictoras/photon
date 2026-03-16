@@ -151,6 +151,11 @@ endif()
 
 if(PHOTON_OIDN_READY)
   target_compile_definitions(anari_library_photon PUBLIC PHOTON_HAS_OIDN)
-  target_link_libraries(anari_library_photon PUBLIC OpenImageDenoise)
+  if(OpenImageDenoise_FOUND)
+    target_link_libraries(anari_library_photon PUBLIC OpenImageDenoise)
+  else()
+    target_include_directories(anari_library_photon PUBLIC ${PHOTON_OIDN_INCLUDE})
+    target_link_libraries(anari_library_photon PUBLIC ${PHOTON_OIDN_LIB})
+  endif()
 endif()
 
