@@ -369,17 +369,27 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
       const f32 f0 = dielectric_f0(mat.ior);
       const f32 F = f0 + (1.f - f0) * Kokkos::pow(1.f - cos_i, 5.f);
 
+      if (!front_face) {
+        Vec3 wt = refract(-wo, nn, eta);
+        if (wt.x != 0.f || wt.y != 0.f || wt.z != 0.f)
+          out.wi = wt;
+        else
+          out.wi = normalize(-wo);
+        out.f = Vec3{1.f, 1.f, 1.f};
+        out.pdf = 1.f;
+        out.is_specular = true;
+        return out;
+      }
+
       Vec3 wt = refract(-wo, sn_face, eta);
       if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f)
         wt = refract(-wo, nn, eta);
 
       if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f) {
-        out.wi = reflect(-wo, sn_face);
+        out.wi = reflect(-wo, nn);
         out.f = Vec3{1.f, 1.f, 1.f};
       } else if (rng.next_f32() < F) {
-        out.wi = reflect(-wo, sn_face);
-        if (dot(out.wi, nn) <= 0.f)
-          out.wi = reflect(-wo, nn);
+        out.wi = reflect(-wo, nn);
         out.f = Vec3{1.f, 1.f, 1.f};
       } else {
         out.wi = wt;
