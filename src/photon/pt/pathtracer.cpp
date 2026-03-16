@@ -245,7 +245,7 @@ RenderResult PathTracer::render() const
               aov_albedo(idx) = mat.base_color;
             }
 
-            if (material_is_emissive(mat)) {
+            if (material_is_emissive(mat) && dot(wo, n) > 0.f) {
               accum(idx) = accum(idx) + throughput(idx) * material_emission(mat);
             }
 
