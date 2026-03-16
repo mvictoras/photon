@@ -302,7 +302,17 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
   const f32 rough = Kokkos::fmax(mat.roughness, 0.001f);
 
   f32 w_diffuse, w_specular, w_transmission, w_clearcoat;
-  if (front_face) {
+  if (!front_face && mat.transmission > 0.f) {
+    w_diffuse = 0.f;
+    w_specular = 0.f;
+    w_transmission = 1.f;
+    w_clearcoat = 0.f;
+  } else if (mat.transmission >= 1.f && mat.metallic <= 0.f) {
+    w_diffuse = 0.f;
+    w_specular = 0.f;
+    w_transmission = 1.f;
+    w_clearcoat = 0.f;
+  } else if (front_face) {
     disney_lobe_weights(mat, w_diffuse, w_specular, w_transmission, w_clearcoat);
   } else {
     w_diffuse = 0.f;
@@ -360,47 +370,29 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
   }
 
   if (xi < p_diffuse + p_specular + p_transmission && mat.transmission > 0.f) {
-    const Vec3 sn_face = front_face ? shading_n : shading_n * -1.f;
     const Vec3 nn = front_face ? n : n * -1.f;
-    const f32 eta = front_face ? (1.f / mat.ior) : mat.ior;
 
     if (mat.roughness < 0.1f) {
       const f32 cos_i = saturate(Kokkos::fabs(dot(wo, nn)));
       const f32 f0 = dielectric_f0(mat.ior);
       const f32 F = f0 + (1.f - f0) * Kokkos::pow(1.f - cos_i, 5.f);
 
-      if (!front_face) {
-        Vec3 wt = refract(-wo, nn, eta);
-        if (wt.x != 0.f || wt.y != 0.f || wt.z != 0.f)
-          out.wi = wt;
-        else
-          out.wi = normalize(-wo);
-        out.f = Vec3{1.f, 1.f, 1.f};
-        out.pdf = 1.f;
-        out.is_specular = true;
-        return out;
-      }
-
-      Vec3 wt = refract(-wo, sn_face, eta);
-      if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f)
-        wt = refract(-wo, nn, eta);
-
-      if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f) {
-        out.wi = reflect(-wo, nn);
-        out.f = Vec3{1.f, 1.f, 1.f};
-      } else if (rng.next_f32() < F) {
-        out.wi = reflect(-wo, nn);
-        out.f = Vec3{1.f, 1.f, 1.f};
+      if (rng.next_f32() < F) {
+        out.wi = reflect(-wo, shading_n);
+        if (dot(out.wi, nn) <= 0.f)
+          out.wi = reflect(-wo, nn);
       } else {
-        out.wi = wt;
-        out.f = Vec3{1.f, 1.f, 1.f};
+        out.wi = normalize(-wo);
       }
+      out.f = Vec3{1.f, 1.f, 1.f};
       out.pdf = 1.f;
       out.is_specular = true;
       return out;
     }
 
+    const Vec3 sn_face = front_face ? shading_n : shading_n * -1.f;
     const Vec3 h = sample_ggx_half_vector(sn_face, rough, rng);
+    const f32 eta = front_face ? (1.f / mat.ior) : mat.ior;
     const Vec3 wt_r = refract(-wo, h, eta);
     if (wt_r.x == 0.f && wt_r.y == 0.f && wt_r.z == 0.f) {
       out.wi = reflect(-wo, h);
