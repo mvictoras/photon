@@ -46,12 +46,12 @@ Production GPU path tracer built with **Kokkos** for portable execution across N
 
 | Backend | Hardware | Status |
 |---------|----------|--------|
-| **Kokkos BVH** | Any (CUDA/HIP/SYCL/OpenMP) | Default, fastest for GPU |
-| **Embree 4** | Intel/AMD CPU | Working (CPU↔GPU transfer overhead) |
-| **OptiX 8** | NVIDIA GPU (RT cores) | Working (separate dispatch overhead) |
+| **Kokkos BVH** | Any (CUDA/HIP/SYCL/OpenMP) | Default — all shading on GPU, zero host sync |
+| **Embree 4** | Intel/AMD CPU | Working (CPU↔GPU transfer bottleneck) |
+| **OptiX 8** | NVIDIA GPU (RT cores) | Working (naive integration — shading on CPU, needs megakernel refactor for full RT core speedup) |
 | **HIP RT** | AMD GPU | Stub (ready for implementation) |
 
-Auto-selection: OptiX → Embree → Kokkos. Override with `PHOTON_BACKEND=kokkos|embree|optix`.
+Override with `PHOTON_BACKEND=kokkos|embree|optix`.
 
 ## pbrt-v4 Scene Reader
 
