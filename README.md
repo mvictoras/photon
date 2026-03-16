@@ -1,134 +1,191 @@
-# photon
+# Photon
 
-Production path tracer built as an **ANARI** device with **C++23** and **Kokkos** for portable GPU execution (CUDA/HIP/SYCL).
+Production GPU path tracer built with **Kokkos** for portable execution across NVIDIA, AMD, and Intel GPUs. Implements a full **Disney Principled BSDF**, reads **pbrt-v4** scene files, and integrates with the **ANARI** rendering standard.
 
-## Features
+![Bathroom](renders/pbrt_bathroom_production.png)
+*Bathroom scene — 592K triangles, 12 textures, 1920x1920, 1024 spp, OIDN denoised*
 
-### Rendering
-- **Wavefront path tracing** integrator with configurable SPP and max bounces
-- **Next Event Estimation (NEE)** — direct light sampling for fast convergence
+## Rendering Features
+
+- **Wavefront path tracing** with configurable SPP and max bounces
+- **Next Event Estimation (NEE)** with area light and emissive mesh sampling
 - **Multiple Importance Sampling (MIS)** — power heuristic combining BSDF + light PDFs
-- **Russian Roulette** — unbiased path termination after bounce 2
-- **Disney Principled BSDF** — metallic, roughness, transmission, clearcoat, subsurface scattering
-- **GGX microfacet model** with Fresnel and Smith geometry term
+- **Russian Roulette** — unbiased path termination
+- **Adaptive sampling** — variance-based per-pixel early termination
+- **Firefly clamping** — throughput limiting for noise reduction
+- **ACES filmic tone mapping** with exposure control
+- **Intel OIDN denoiser** integration
 
-### Lighting
-- Point, directional, spot, and area lights
-- **HDR environment maps** with hierarchical importance sampling
-- Emissive geometry (any mesh can be a light source)
+## Disney Principled BSDF
 
-### Geometry & Acceleration
-- Triangle and quad mesh support with smooth normals and UVs
-- **BVH acceleration** (CPU-built, median split)
-- **Pluggable ray-tracing backends**:
-  - **Kokkos BVH** (portable fallback — works everywhere)
-  - **Embree 4** (Intel CPU — SSE/AVX/AVX-512)
-  - **OptiX 7+** (NVIDIA GPU — RT cores)
-  - **HIP RT** (AMD GPU — RDNA2+)
-- **Automatic backend selection** based on available hardware
-- Override via `PHOTON_BACKEND=embree|optix|hiprt|kokkos`
+- Diffuse (Lambertian with Fresnel retro-reflection)
+- Specular reflection (GGX microfacet with Smith geometry)
+- Specular transmission (Fresnel-weighted thin-shell glass)
+- Clearcoat (separate GGX lobe)
+- Sheen (Ashikhmin model with tint)
+- Anisotropic reflection (anisotropic GGX)
+- Specular tint (colored dielectric reflections)
+- Subsurface scattering (Christensen-Burley diffusion approximation)
+- Conductor Fresnel (physical eta/k with named spectral data for Ag, Au, Cu, Al, Fe)
 
-### Volumetric Rendering
-- Heterogeneous volumes with grid-based density
-- **Delta tracking** (Woodcock tracking) for unbiased free-flight sampling
-- **Henyey-Greenstein** phase function for anisotropic scattering
+## Lighting
 
-### Camera
-- Perspective with configurable FOV
-- **Thin lens depth of field** (aperture + focus distance)
-- Orthographic projection
+- Rectangular area lights with importance sampling
+- Emissive triangle mesh sampling in NEE
+- **HDR environment maps** with hierarchical importance sampling (PFM, HDR, PNG)
+- One-sided emission (front-face only, matching pbrt-v4)
 
-### Post-Processing
-- **ACES filmic** and **Reinhard** tone mapping
-- **Intel OIDN** denoiser integration (optional)
-- **AOV channels**: color, depth, normal, albedo
-- sRGB gamma correction
+## Textures
 
-### ANARI Device
-- ANARI SDK v0.15.0 compatible device
-- Camera, Material (physicallyBased), Light, Geometry, Surface, World objects
-- Frame rendering with multiple output channels
+- Runtime GPU texture sampling with bilinear filtering
+- Flat texture atlas (single Kokkos::View) for multi-texture access
+- Per-material texture support: base color, normal map, roughness, metallic, emission, alpha
+- Image formats: TGA, PNG, JPEG, BMP, HDR, PFM
 
-### Textures
-- 2D image textures with bilinear filtering and UV wrapping
-- Texture atlas for GPU-efficient multi-texture access
-- Per-material texture assignments (base color, normal, roughness, metallic, emission)
+## Ray Tracing Backends
+
+| Backend | Hardware | Status |
+|---------|----------|--------|
+| **Kokkos BVH** | Any (CUDA/HIP/SYCL/OpenMP) | Default, fastest for GPU |
+| **Embree 4** | Intel/AMD CPU | Working (CPU↔GPU transfer overhead) |
+| **OptiX 8** | NVIDIA GPU (RT cores) | Working (separate dispatch overhead) |
+| **HIP RT** | AMD GPU | Stub (ready for implementation) |
+
+Auto-selection: OptiX → Embree → Kokkos. Override with `PHOTON_BACKEND=kokkos|embree|optix`.
+
+## pbrt-v4 Scene Reader
+
+Full parser for the pbrt-v4 scene format:
+
+- `Film`, `Camera` (perspective with DOF), `Sampler`, `Integrator`
+- `LookAt`, `Transform`, `Scale`, `Rotate`, `ConcatTransform`, `Identity`
+- `MakeNamedMaterial` (diffuse, conductor, dielectric, coateddiffuse, diffusetransmission)
+- `Texture` definitions with image file loading
+- `Shape` (trianglemesh, plymesh, sphere)
+- `AreaLightSource`, `LightSource` (infinite/environment)
+- `Include`, `Import` (recursive file inclusion)
+- `ObjectBegin/End/Instance` (geometry instancing with budget limits)
+- `AttributeBegin/End` (scoped state)
+- Named spectral data (metal-Ag-eta, metal-Au-k, etc.)
+- PLY mesh loading (binary little-endian, ASCII)
+
+## Quick Start
+
+```bash
+# 1. Build
+./scripts/build.sh
+
+# 2. Download test scenes
+./scripts/download_scenes.sh scenes
+
+# 3. Render
+./build/app/photon_pbrt_render scenes/cornell-box/scene-v4.pbrt \
+  -o cornell.ppm --spp 256 --width 1024 --height 1024 \
+  --denoise --exposure 0.3
+```
 
 ## Build
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+# Basic (Kokkos only, auto-detects CUDA)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build -R '^photon_'
-```
 
-### Optional backends
+# With pre-installed Kokkos (recommended for CUDA)
+cmake -S . -B build -DKokkos_DIR=/path/to/kokkos/lib/cmake/Kokkos
 
-```bash
-# Embree (auto-detected if installed)
-cmake -S . -B build -DPHOTON_ENABLE_EMBREE=ON
+# With Embree
+cmake -S . -B build -DPHOTON_ENABLE_EMBREE=ON -Dembree_DIR=/path/to/embree
 
-# OptiX (requires NVIDIA GPU + OptiX SDK)
+# With OptiX
 cmake -S . -B build -DPHOTON_ENABLE_OPTIX=ON -DOptiX_INSTALL_DIR=/path/to/optix
 
-# HIP RT (requires AMD GPU + ROCm)
-cmake -S . -B build -DPHOTON_ENABLE_HIPRT=ON
-
-# Kokkos GPU backends
-cmake -S . -B build -DOPENCODE_ENABLE_CUDA=ON   # NVIDIA
-cmake -S . -B build -DOPENCODE_ENABLE_HIP=ON    # AMD
-cmake -S . -B build -DOPENCODE_ENABLE_SYCL=ON   # Intel
-
-# Intel OIDN denoiser (auto-detected if installed)
+# With OIDN denoiser
 cmake -S . -B build -DPHOTON_ENABLE_OIDN=ON
 ```
 
-## Run
+## CLI Usage
 
 ```bash
-# Standalone render (Cornell box → out.ppm)
-./build/app/photon_render
-open out.ppm
+photon_pbrt_render <scene.pbrt> [options]
 
-# ANARI device render
-LD_LIBRARY_PATH=build/src:build/_deps/anari-build ./build/app/photon_anari_render
-open anari_out.ppm
+Options:
+  -o <file>           Output PPM file (default: pbrt_render.ppm)
+  --width <W>         Image width (overrides scene)
+  --height <H>        Image height (overrides scene)
+  --spp <N>           Samples per pixel (overrides scene)
+  --max-depth <N>     Max bounce depth (overrides scene)
+  --exposure <F>      Exposure multiplier (default: 1.0)
+  --denoise           Enable OIDN denoising
+  --max-instances <N> Max instances per object (for large scenes)
+  --max-triangles <N> Max total triangle budget
+```
+
+## ANARI Device
+
+Photon also works as an ANARI device for integration with ANARI-compatible applications:
+
+```bash
+# Render ANARI test scenes
+./build/app/photon_scene_render --device photon --scene test/instanced_cubes \
+  --width 512 --height 512 --spp 64 --output render.ppm
 ```
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│            ANARI Device Layer               │
-│     PhotonDevice, SceneFromAnari            │
-├─────────────────────────────────────────────┤
-│      Wavefront Path Tracing Integrator      │
-│    NEE, MIS, Russian Roulette, Disney BSDF  │
-│         (Kokkos — portable)                 │
-├─────────────────────────────────────────────┤
-│           RayBackend Interface              │
-│        build_accel() / trace_rays()         │
-├──────┬──────────┬──────────┬────────────────┤
-│Kokkos│  Embree  │  OptiX   │    HIP RT      │
-│ BVH  │  (CPU)   │ (NVIDIA) │    (AMD)       │
-└──────┴──────────┴──────────┴────────────────┘
+┌──────────────────────────────────────────────────┐
+│              ANARI Device Layer                  │
+│        PhotonDevice, SceneFromAnari              │
+├──────────────────────────────────────────────────┤
+│  pbrt-v4 Scene Reader    │    Texture Atlas      │
+│  Parser, PLY, PFM, TGA   │    GPU Flat Buffer    │
+├──────────────────────────────────────────────────┤
+│       Wavefront Path Tracing Integrator          │
+│  NEE, MIS, Adaptive Sampling, Disney BSDF        │
+│  Firefly Clamp, ACES Tone Map, OIDN Denoise      │
+│              (Kokkos — portable)                 │
+├──────────────────────────────────────────────────┤
+│            RayBackend Interface                  │
+│         build_accel() / trace_rays()             │
+├───────┬──────────┬──────────┬────────────────────┤
+│Kokkos │  Embree  │  OptiX   │      HIP RT        │
+│ BVH   │  (CPU)   │ (NVIDIA) │      (AMD)         │
+└───────┴──────────┴──────────┴────────────────────┘
 ```
 
-## Tests
+## Test Scenes
 
-15 unit/integration tests covering math, sampling, materials, lighting, textures, camera, BVH, backend, path tracer, volumes, tone mapping, and full pipeline integration.
+Download scenes from [Benedikt Bitterli's collection](https://benedikt-bitterli.me/resources/):
 
 ```bash
-ctest --test-dir build -R '^photon_' --output-on-failure
+./scripts/download_scenes.sh scenes
 ```
+
+| Scene | Triangles | Description |
+|-------|-----------|-------------|
+| cornell-box | 36 | Classic Cornell box with area light |
+| spaceship | 457K | Spaceship with glass dome, metallic body |
+| bathroom | 592K | Interior with textures, chrome, glass, mirror |
+| living-room | 143K | HDRI environment lighting |
+| staircase | 263K | Complex interior geometry |
+| veach-mis | 3K | MIS test with sphere emitters |
+| kitchen | 1.4M | Large interior, 90 materials |
+
+The renderer also supports the [Disney Moana Island Scene](https://www.disneyanimation.com/resources/moana-island-scene/) (97M+ triangles).
 
 ## Dependencies
 
 | Dependency | Version | Method | Required |
 |-----------|---------|--------|----------|
-| Kokkos | 5.0.1 | FetchContent | Yes |
+| Kokkos | 5.0+ | find_package / FetchContent | Yes |
 | ANARI SDK | 0.15.0 | FetchContent | Yes |
 | Embree | 4.x | find_package | Optional |
-| OptiX | 7.x+ | find_package | Optional |
+| OptiX | 8.x | find_package | Optional |
 | HIP RT | ROCm 5.x+ | find_package | Optional |
 | Intel OIDN | 2.x | find_package | Optional |
+| stb_image | (bundled) | via ANARI SDK | Yes |
+
+## License
+
+See individual source files for license information.
