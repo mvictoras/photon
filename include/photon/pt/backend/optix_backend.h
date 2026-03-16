@@ -25,10 +25,10 @@ private:
   OptixModule m_module{nullptr};
   OptixPipeline m_pipeline{nullptr};
   OptixShaderBindingTable m_sbt{};
+  CUdeviceptr m_d_params{0};
   TriangleMesh m_mesh;
 
   void create_pipeline();
-  void create_sbt();
 };
 
 }
