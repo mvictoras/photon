@@ -27,6 +27,7 @@ struct Args {
   int64_t max_instances = -1;
   int64_t max_triangles = -1;
   bool denoise = false;
+  float exposure = 1.f;
 };
 
 Args parse_args(int argc, char **argv)
@@ -50,14 +51,24 @@ Args parse_args(int argc, char **argv)
       a.max_triangles = std::atoll(argv[++i]);
     else if (arg == "--denoise")
       a.denoise = true;
+    else if (arg == "--exposure" && i + 1 < argc)
+      a.exposure = std::atof(argv[++i]);
     else if (arg[0] != '-')
       a.scene_path = arg;
   }
   return a;
 }
 
+// ACES filmic tone mapping (Narkowicz 2015 fit)
+static float aces_filmic(float x)
+{
+  const float a = 2.51f, b = 0.03f, c = 2.43f, d = 0.59f, e = 0.14f;
+  x = std::fmax(x, 0.f);
+  return std::fmin((x * (a * x + b)) / (x * (c * x + d) + e), 1.f);
+}
+
 void write_ppm(const std::string &file, const photon::pt::RenderResult &result,
-    uint32_t w, uint32_t h)
+    uint32_t w, uint32_t h, float exposure = 1.f)
 {
   auto color_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.color);
 
@@ -69,8 +80,8 @@ void write_ppm(const std::string &file, const photon::pt::RenderResult &result,
     for (uint32_t x = 0; x < w; ++x) {
       auto c = color_host(y, x);
 
-      auto to_u8 = [](float v) -> unsigned char {
-        v = v < 0.f ? 0.f : (v > 1.f ? 1.f : v);
+      auto to_u8 = [exposure](float v) -> unsigned char {
+        v = aces_filmic(v * exposure);
         v = std::pow(v, 1.f / 2.2f);
         return static_cast<unsigned char>(v * 255.f + 0.5f);
       };
@@ -161,7 +172,7 @@ int main(int argc, char **argv)
       }
     }
 
-    write_ppm(args.output, result, uint32_t(pbrt_scene.width), uint32_t(pbrt_scene.height));
+    write_ppm(args.output, result, uint32_t(pbrt_scene.width), uint32_t(pbrt_scene.height), args.exposure);
     std::fprintf(stderr, "Output: %s\n", args.output.c_str());
   }
   Kokkos::finalize();
