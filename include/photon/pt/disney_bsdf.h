@@ -360,47 +360,48 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
   }
 
   if (xi < p_diffuse + p_specular + p_transmission && mat.transmission > 0.f) {
-    if (mat.thin != 0) {
-      out.wi = -wo;
-      out.pdf = 1.f;
-      out.is_specular = true;
-      out.f = Vec3{1.f, 1.f, 1.f};
-      return out;
-    }
-
+    const Vec3 sn_face = front_face ? shading_n : shading_n * -1.f;
     const Vec3 nn = front_face ? n : n * -1.f;
-    const Vec3 sn_face = nn;
     const f32 eta = front_face ? (1.f / mat.ior) : mat.ior;
 
     if (mat.roughness < 0.1f) {
+      const f32 cos_i = saturate(Kokkos::fabs(dot(wo, nn)));
+      const f32 f0 = dielectric_f0(mat.ior);
+      const f32 F = f0 + (1.f - f0) * Kokkos::pow(1.f - cos_i, 5.f);
+
       Vec3 wt = refract(-wo, sn_face, eta);
-      if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f) {
+      if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f)
         wt = refract(-wo, nn, eta);
-      }
+
       if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f) {
         out.wi = reflect(-wo, sn_face);
+        out.f = Vec3{1.f, 1.f, 1.f};
+      } else if (rng.next_f32() < F) {
+        out.wi = reflect(-wo, sn_face);
+        if (dot(out.wi, nn) <= 0.f)
+          out.wi = reflect(-wo, nn);
+        out.f = Vec3{1.f, 1.f, 1.f};
       } else {
         out.wi = wt;
+        out.f = Vec3{1.f, 1.f, 1.f};
       }
       out.pdf = 1.f;
       out.is_specular = true;
-      out.f = Vec3{1.f, 1.f, 1.f};
       return out;
     }
 
-    const Vec3 sn_t = front_face ? shading_n : shading_n * -1.f;
-    const Vec3 h = sample_ggx_half_vector(sn_t, rough, rng);
-    const Vec3 wt = refract(-wo, h, eta);
-    if (wt.x == 0.f && wt.y == 0.f && wt.z == 0.f) {
+    const Vec3 h = sample_ggx_half_vector(sn_face, rough, rng);
+    const Vec3 wt_r = refract(-wo, h, eta);
+    if (wt_r.x == 0.f && wt_r.y == 0.f && wt_r.z == 0.f) {
       out.wi = reflect(-wo, h);
       if (dot(out.wi, nn) <= 0.f)
         return BsdfSample{};
       out.f = disney_bsdf_eval(mat, wo, out.wi, n, shading_n);
       out.pdf = disney_bsdf_pdf(mat, wo, out.wi, n, shading_n);
     } else {
-      out.wi = wt;
+      out.wi = wt_r;
       out.f = mat.base_color;
-      const f32 NoH = saturate(Kokkos::fabs(dot(sn_t, h)));
+      const f32 NoH = saturate(Kokkos::fabs(dot(sn_face, h)));
       const f32 VoH = saturate(Kokkos::fabs(dot(wo, h)));
       out.pdf = Kokkos::fmax(D_ggx(NoH, rough) * NoH / (4.f * Kokkos::fmax(VoH, 1e-7f)), 1e-7f);
     }

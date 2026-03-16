@@ -144,7 +144,6 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
       m.base_color = {1.f, 1.f, 1.f};
       m.ior = pmat.eta_scalar;
       m.transmission = 1.f;
-      m.alpha = 0.05f;
       float r = pmat.roughness;
       if (pmat.uroughness >= 0.f)
         r = (pmat.uroughness + (pmat.vroughness >= 0.f ? pmat.vroughness : pmat.uroughness)) * 0.5f;
