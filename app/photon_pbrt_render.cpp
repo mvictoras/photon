@@ -12,6 +12,7 @@
 #include "photon/pbrt/pbrt_parser.h"
 #include "photon/pbrt/pbrt_to_photon.h"
 #include "photon/pt/backend/ray_backend.h"
+#include "photon/pt/denoiser.h"
 #include "photon/pt/pathtracer.h"
 
 namespace {
@@ -25,6 +26,7 @@ struct Args {
   int max_depth = -1;
   int64_t max_instances = -1;
   int64_t max_triangles = -1;
+  bool denoise = false;
 };
 
 Args parse_args(int argc, char **argv)
@@ -46,6 +48,8 @@ Args parse_args(int argc, char **argv)
       a.max_instances = std::atoll(argv[++i]);
     else if (arg == "--max-triangles" && i + 1 < argc)
       a.max_triangles = std::atoll(argv[++i]);
+    else if (arg == "--denoise")
+      a.denoise = true;
     else if (arg[0] != '-')
       a.scene_path = arg;
   }
@@ -142,6 +146,20 @@ int main(int argc, char **argv)
     double render_ms = std::chrono::duration<double, std::milli>(t5 - t4).count();
 
     std::fprintf(stderr, "Rendered in %.1f ms (%.2f fps)\n", render_ms, 1000.0 / render_ms);
+
+    if (args.denoise) {
+      if (photon::pt::Denoiser::is_available()) {
+        std::fprintf(stderr, "Denoising...\n");
+        auto t6 = std::chrono::high_resolution_clock::now();
+        photon::pt::Denoiser::denoise(result.color, result.albedo, result.normal,
+            uint32_t(pbrt_scene.width), uint32_t(pbrt_scene.height));
+        auto t7 = std::chrono::high_resolution_clock::now();
+        double denoise_ms = std::chrono::duration<double, std::milli>(t7 - t6).count();
+        std::fprintf(stderr, "Denoised in %.1f ms\n", denoise_ms);
+      } else {
+        std::fprintf(stderr, "Warning: denoiser not available (OIDN not found)\n");
+      }
+    }
 
     write_ppm(args.output, result, uint32_t(pbrt_scene.width), uint32_t(pbrt_scene.height));
     std::fprintf(stderr, "Output: %s\n", args.output.c_str());
