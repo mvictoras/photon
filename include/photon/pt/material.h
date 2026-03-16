@@ -27,7 +27,7 @@ struct Material {
   Vec3 subsurface_color{1.f, 1.f, 1.f};
   f32 subsurface_radius{1.f};
   f32 alpha{1.f};
-  bool thin{false};
+  i32 thin{0};
   i32 base_color_tex{-1};
   i32 normal_tex{-1};
   i32 roughness_tex{-1};

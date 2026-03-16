@@ -124,11 +124,6 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
       m.base_color = {pmat.reflectance.x, pmat.reflectance.y, pmat.reflectance.z};
       m.roughness = 1.f;
       m.metallic = 0.f;
-      if (name.find("Light") != std::string::npos &&
-          pmat.reflectance.x < 0.01f && pmat.reflectance.y < 0.01f && pmat.reflectance.z < 0.01f) {
-        m.emission = {500.f, 400.f, 300.f};
-        m.emission_strength = 1.f;
-      }
     } else if (pmat.type == "conductor") {
       auto fresnel_f0 = [](float eta, float k) {
         float num = (eta - 1.f) * (eta - 1.f) + k * k;
@@ -146,22 +141,14 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
         r = (pmat.uroughness + (pmat.vroughness >= 0.f ? pmat.vroughness : pmat.uroughness)) * 0.5f;
       m.roughness = r;
     } else if (pmat.type == "dielectric") {
-      if (name.find("Bulb") != std::string::npos) {
-        m.base_color = {1.f, 0.95f, 0.85f};
-        m.roughness = 1.f;
-        m.metallic = 0.f;
-        m.transmission = 0.f;
-        m.emission = {20.f, 16.f, 10.f};
-        m.emission_strength = 1.f;
-      } else {
-        m.base_color = {1.f, 1.f, 1.f};
-        m.ior = pmat.eta_scalar;
-        m.transmission = 1.f;
-        float r = pmat.roughness;
-        if (pmat.uroughness >= 0.f)
-          r = (pmat.uroughness + (pmat.vroughness >= 0.f ? pmat.vroughness : pmat.uroughness)) * 0.5f;
-        m.roughness = r;
-      }
+      m.base_color = {1.f, 1.f, 1.f};
+      m.ior = pmat.eta_scalar;
+      m.transmission = 1.f;
+      m.alpha = 0.05f;
+      float r = pmat.roughness;
+      if (pmat.uroughness >= 0.f)
+        r = (pmat.uroughness + (pmat.vroughness >= 0.f ? pmat.vroughness : pmat.uroughness)) * 0.5f;
+      m.roughness = r;
     } else if (pmat.type == "coateddiffuse") {
       m.base_color = {pmat.reflectance.x, pmat.reflectance.y, pmat.reflectance.z};
       m.metallic = 0.f;
