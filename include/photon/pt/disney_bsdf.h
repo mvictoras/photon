@@ -360,7 +360,7 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
   }
 
   if (xi < p_diffuse + p_specular + p_transmission && mat.transmission > 0.f) {
-    if (mat.thin) {
+    if (mat.thin != 0) {
       out.wi = -wo;
       out.pdf = 1.f;
       out.is_specular = true;
@@ -368,8 +368,8 @@ KOKKOS_FUNCTION inline BsdfSample disney_bsdf_sample(const Material &mat,
       return out;
     }
 
-    const Vec3 sn_face = front_face ? shading_n : shading_n * -1.f;
     const Vec3 nn = front_face ? n : n * -1.f;
+    const Vec3 sn_face = nn;
     const f32 eta = front_face ? (1.f / mat.ior) : mat.ior;
 
     if (mat.roughness < 0.1f) {

@@ -198,8 +198,8 @@ RenderResult PathTracer::render() const
             if (alpha_val < 1.f) {
               Rng alpha_rng(u32(1337u) ^ (u32(idx) * 7919u) ^ (bounce * 6271u) ^ (s * 26699u));
               if (alpha_rng.next_f32() > alpha_val) {
-                rays.origins(idx) = p;
-                rays.tmin(idx) = 1e-3f;
+                rays.origins(idx) = p + rays.directions(idx) * 0.01f;
+                rays.tmin(idx) = 1e-4f;
                 rays.tmax(idx) = 1e30f;
                 return;
               }
@@ -383,9 +383,12 @@ RenderResult PathTracer::render() const
             }
 
             const Vec3 wi = normalize(bs.wi);
-            const bool entering = dot(wi, hr.normal) < 0.f;
-            const Vec3 offset = entering ? hr.normal * -1e-3f : hr.normal * 1e-3f;
-            rays.origins(idx) = bs.is_specular && is_transmissive ? p + offset : p;
+            if (is_transmissive && bs.is_specular) {
+              const f32 sign = dot(wi, hr.normal) < 0.f ? -1.f : 1.f;
+              rays.origins(idx) = p + hr.normal * (sign * 1e-3f);
+            } else {
+              rays.origins(idx) = p;
+            }
             rays.directions(idx) = wi;
             rays.tmin(idx) = 1e-3f;
             rays.tmax(idx) = 1e30f;
