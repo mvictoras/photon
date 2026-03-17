@@ -127,13 +127,16 @@ int main(int argc, char **argv)
       env.build_cdf();
 
 
+      Kokkos::View<Vec3 *> eval_result("eval_result", 1);
       {
         const Vec2 uv{(2.f + 0.5f) / 4.f, (0.f + 0.5f) / 2.f};
-        const Vec3 dir = EnvironmentMap::uv_to_dir(uv);
-        const Vec3 c = env.evaluate(dir);
-        assert(c.x > 1.f && c.y > 1.f && c.z > 1.f);
+        Kokkos::parallel_for("env_eval", 1, KOKKOS_LAMBDA(int) {
+          const Vec3 dir = EnvironmentMap::uv_to_dir(uv);
+          eval_result(0) = env.evaluate(dir);
+        });
+        auto er_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, eval_result);
+        assert(er_h(0).x > 1.f && er_h(0).y > 1.f && er_h(0).z > 1.f);
       }
-
 
       u32 brightCount = 0;
       Kokkos::parallel_reduce(
@@ -153,13 +156,18 @@ int main(int argc, char **argv)
 
       assert(brightCount > 120);
 
-
       {
-        Rng rng(999u);
-        f32 pdf = 0.f;
-        const Vec3 dir = env.sample_direction(rng, pdf);
-        assert(pdf > 0.f);
-        assert(env.pdf(dir) > 0.f);
+        Kokkos::View<f32 *> pdf_results("pdf_results", 2);
+        Kokkos::parallel_for("env_pdf_test", 1, KOKKOS_LAMBDA(int) {
+          Rng rng(999u);
+          f32 pdf = 0.f;
+          const Vec3 dir = env.sample_direction(rng, pdf);
+          pdf_results(0) = pdf;
+          pdf_results(1) = env.pdf(dir);
+        });
+        auto pr_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, pdf_results);
+        assert(pr_h(0) > 0.f);
+        assert(pr_h(1) > 0.f);
       }
     }
   }
