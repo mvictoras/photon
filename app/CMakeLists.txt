@@ -31,6 +31,9 @@ target_link_libraries(photon_pbrt_render PRIVATE anari_library_photon)
 if(PHOTON_MPI_READY)
   add_executable(photon_mpi_render photon_mpi_render.cpp)
   target_link_libraries(photon_mpi_render PRIVATE anari_library_photon MPI::MPI_CXX)
+
+  add_executable(photon_scivis_mpi photon_scivis_mpi.cpp)
+  target_link_libraries(photon_scivis_mpi PRIVATE anari_library_photon MPI::MPI_CXX)
 endif()
 
 add_executable(photon_scene_render photon_scene_render.cpp)
