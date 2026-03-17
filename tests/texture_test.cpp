@@ -29,15 +29,19 @@ int main(int argc, char **argv)
     info_h(0).height = 2;
     Kokkos::deep_copy(atlas.infos, info_h);
 
-    Vec3 center = atlas.sample(0, 0.5f, 0.5f);
-    assert(std::abs(center.x - 0.5f) < 0.15f);
-    assert(std::abs(center.y - 0.5f) < 0.15f);
-    assert(std::abs(center.z - 0.5f) < 0.15f);
+    Kokkos::View<Vec3 *> results("results", 3);
+    Kokkos::parallel_for("tex_test", 1, KOKKOS_LAMBDA(int) {
+      results(0) = atlas.sample(0, 0.5f, 0.5f);
+      results(1) = atlas.sample(-1, 0.5f, 0.5f);
+      results(2) = atlas.sample(99, 0.5f, 0.5f);
+    });
 
-    Vec3 w = atlas.sample(-1, 0.5f, 0.5f);
-    assert(std::abs(w.x - 1.f) < 0.01f);
-    Vec3 w2 = atlas.sample(99, 0.5f, 0.5f);
-    assert(std::abs(w2.x - 1.f) < 0.01f);
+    auto res_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, results);
+    assert(std::abs(res_h(0).x - 0.5f) < 0.15f);
+    assert(std::abs(res_h(0).y - 0.5f) < 0.15f);
+    assert(std::abs(res_h(0).z - 0.5f) < 0.15f);
+    assert(std::abs(res_h(1).x - 1.f) < 0.01f);
+    assert(std::abs(res_h(2).x - 1.f) < 0.01f);
   }
   Kokkos::finalize();
   return 0;
