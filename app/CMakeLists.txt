@@ -34,6 +34,16 @@ if(PHOTON_MPI_READY)
 
   add_executable(photon_scivis_mpi photon_scivis_mpi.cpp)
   target_link_libraries(photon_scivis_mpi PRIVATE anari_library_photon MPI::MPI_CXX)
+
+  if(PHOTON_ICET_READY)
+    target_link_libraries(photon_mpi_render PRIVATE IceTCore IceTMPI)
+    target_include_directories(photon_mpi_render PRIVATE ${icet_SOURCE_DIR}/src/include ${icet_BINARY_DIR}/src/include)
+    target_compile_definitions(photon_mpi_render PRIVATE PHOTON_HAS_ICET)
+
+    target_link_libraries(photon_scivis_mpi PRIVATE IceTCore IceTMPI)
+    target_include_directories(photon_scivis_mpi PRIVATE ${icet_SOURCE_DIR}/src/include ${icet_BINARY_DIR}/src/include)
+    target_compile_definitions(photon_scivis_mpi PRIVATE PHOTON_HAS_ICET)
+  endif()
 endif()
 
 add_executable(photon_scene_render photon_scene_render.cpp)

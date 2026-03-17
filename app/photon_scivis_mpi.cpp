@@ -1,4 +1,8 @@
 #include <mpi.h>
+#ifdef PHOTON_HAS_ICET
+#include <IceT.h>
+#include <IceTMPI.h>
+#endif
 #include <Kokkos_Core.hpp>
 
 #include <chrono>
@@ -400,31 +404,117 @@ int main(int argc, char **argv)
     double render_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     std::fprintf(stderr, "Rank %d: rendered in %.1f ms\n", rank, render_ms);
 
-    // Composite
     size_t pixel_count = size_t(width) * height;
     auto color_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.color);
     auto depth_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.depth);
 
-    std::vector<Pixel> local_pixels(pixel_count);
+    std::vector<float> color_rgba(pixel_count * 4);
+    std::vector<float> depth_buf(pixel_count);
     for (size_t i = 0; i < pixel_count; ++i) {
       u32 y = u32(i) / u32(width), x = u32(i) % u32(width);
       auto c = color_h(y, x);
-      local_pixels[i] = {c.x, c.y, c.z, depth_h(y, x)};
+      color_rgba[i*4+0] = c.x;
+      color_rgba[i*4+1] = c.y;
+      color_rgba[i*4+2] = c.z;
+      color_rgba[i*4+3] = 1.f;
+      depth_buf[i] = depth_h(y, x);
     }
 
+    auto t2 = std::chrono::high_resolution_clock::now();
+
+#ifdef PHOTON_HAS_ICET
+    static float *g_icet_color = nullptr;
+    static float *g_icet_depth = nullptr;
+    static int g_icet_width = 0, g_icet_height = 0;
+    g_icet_color = color_rgba.data();
+    g_icet_depth = depth_buf.data();
+    g_icet_width = width;
+    g_icet_height = height;
+
+    IceTCommunicator icet_comm = icetCreateMPICommunicator(MPI_COMM_WORLD);
+    IceTContext icet_ctx = icetCreateContext(icet_comm);
+
+    icetSetColorFormat(ICET_IMAGE_COLOR_RGBA_FLOAT);
+    icetSetDepthFormat(ICET_IMAGE_DEPTH_FLOAT);
+    icetResetTiles();
+    icetAddTile(0, 0, width, height, 0);
+    icetStrategy(ICET_STRATEGY_REDUCE);
+    icetCompositeMode(ICET_COMPOSITE_MODE_Z_BUFFER);
+    icetDisable(ICET_COMPOSITE_ONE_BUFFER);
+
+    icetDrawCallback([](const IceTDouble *, const IceTDouble *,
+                        const IceTFloat *, const IceTInt *,
+                        IceTImage result) {
+      IceTFloat *c = icetImageGetColorf(result);
+      IceTFloat *d = icetImageGetDepthf(result);
+      int npix = g_icet_width * g_icet_height;
+      std::memcpy(c, g_icet_color, size_t(npix) * 4 * sizeof(float));
+      std::memcpy(d, g_icet_depth, size_t(npix) * sizeof(float));
+    });
+
+    IceTDouble identity[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    IceTFloat bg[4] = {0.f, 0.f, 0.f, 0.f};
+    IceTInt viewport[4] = {0, 0, width, height};
+
+    if (rank == 0)
+      std::fprintf(stderr, "Compositing with IceT (strategy=REDUCE, mode=Z_BUFFER)...\n");
+
+    icetBoundingBoxf(-4.f, 4.f, -4.f, 4.f, -4.f, 4.f);
+    IceTImage icet_image = icetDrawFrame(identity, identity, bg);
+
+    auto t3 = std::chrono::high_resolution_clock::now();
+    double composite_ms = std::chrono::duration<double, std::milli>(t3 - t2).count();
+    if (rank == 0)
+      std::fprintf(stderr, "IceT composited in %.1f ms\n", composite_ms);
+
+    if (rank == 0 && !icetImageIsNull(icet_image)) {
+      const IceTFloat *composited_color = icetImageGetColorcf(icet_image);
+      std::fprintf(stderr, "Writing %s...\n", output.c_str());
+      std::ofstream out(output, std::ios::binary);
+      out << "P6\n" << width << " " << height << "\n255\n";
+      std::vector<unsigned char> row(size_t(width) * 3);
+      for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+          int idx = y * width + x;
+          auto to_u8 = [exposure](float v) -> unsigned char {
+            v = aces_filmic(v * exposure);
+            v = std::pow(v, 1.f / 2.2f);
+            return static_cast<unsigned char>(v * 255.f + 0.5f);
+          };
+          row[3*x]   = to_u8(composited_color[idx*4+0]);
+          row[3*x+1] = to_u8(composited_color[idx*4+1]);
+          row[3*x+2] = to_u8(composited_color[idx*4+2]);
+        }
+        out.write(reinterpret_cast<char*>(row.data()), std::streamsize(row.size()));
+      }
+      std::fprintf(stderr, "Output: %s\n", output.c_str());
+    }
+
+    icetDestroyContext(icet_ctx);
+    icetDestroyMPICommunicator(icet_comm);
+#else
     MPI_Datatype mpi_pixel;
     MPI_Type_contiguous(4, MPI_FLOAT, &mpi_pixel);
     MPI_Type_commit(&mpi_pixel);
-    MPI_Op depth_op;
-    MPI_Op_create(depth_composite_op, 1, &depth_op);
+    MPI_Op depth_op_handle;
+    MPI_Op_create(depth_composite_op, 1, &depth_op_handle);
+
+    std::vector<Pixel> local_pixels(pixel_count);
+    for (size_t i = 0; i < pixel_count; ++i)
+      local_pixels[i] = {color_rgba[i*4], color_rgba[i*4+1], color_rgba[i*4+2], depth_buf[i]};
 
     std::vector<Pixel> final_pixels;
     if (rank == 0) final_pixels.resize(pixel_count);
 
     MPI_Reduce(local_pixels.data(), rank == 0 ? final_pixels.data() : nullptr,
-               int(pixel_count), mpi_pixel, depth_op, 0, MPI_COMM_WORLD);
+               int(pixel_count), mpi_pixel, depth_op_handle, 0, MPI_COMM_WORLD);
 
-    MPI_Op_free(&depth_op);
+    auto t3 = std::chrono::high_resolution_clock::now();
+    double composite_ms = std::chrono::duration<double, std::milli>(t3 - t2).count();
+    if (rank == 0)
+      std::fprintf(stderr, "MPI_Reduce composited in %.1f ms\n", composite_ms);
+
+    MPI_Op_free(&depth_op_handle);
     MPI_Type_free(&mpi_pixel);
 
     if (rank == 0) {
@@ -440,7 +530,7 @@ int main(int argc, char **argv)
             v = std::pow(v, 1.f / 2.2f);
             return static_cast<unsigned char>(v * 255.f + 0.5f);
           };
-          row[3*x] = to_u8(p.r);
+          row[3*x]   = to_u8(p.r);
           row[3*x+1] = to_u8(p.g);
           row[3*x+2] = to_u8(p.b);
         }
@@ -448,6 +538,7 @@ int main(int argc, char **argv)
       }
       std::fprintf(stderr, "Output: %s\n", output.c_str());
     }
+#endif
   }
   Kokkos::finalize();
   MPI_Finalize();
