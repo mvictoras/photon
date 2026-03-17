@@ -31,13 +31,45 @@ static float aces_filmic(float x)
   return std::fmin((x * (a * x + b)) / (x * (c * x + d) + e), 1.f);
 }
 
-// Procedural scalar field: gyroid + noise
-float scalar_field(float x, float y, float z, float freq)
+enum class ScalarFieldType { Gyroid, Turbulence, Supernova };
+
+float noise3d(float x, float y, float z)
 {
-  float gyroid = std::sin(freq * x) * std::cos(freq * y)
-               + std::sin(freq * y) * std::cos(freq * z)
-               + std::sin(freq * z) * std::cos(freq * x);
-  return gyroid;
+  float n = std::sin(x * 12.9898f + y * 78.233f + z * 45.164f);
+  return (n - std::floor(n)) * 2.f - 1.f;
+}
+
+float scalar_field(float x, float y, float z, float freq, ScalarFieldType type = ScalarFieldType::Gyroid)
+{
+  switch (type) {
+  case ScalarFieldType::Gyroid: {
+    return std::sin(freq * x) * std::cos(freq * y)
+         + std::sin(freq * y) * std::cos(freq * z)
+         + std::sin(freq * z) * std::cos(freq * x);
+  }
+  case ScalarFieldType::Turbulence: {
+    float v = 0.f, amp = 1.f, f = freq;
+    for (int oct = 0; oct < 4; ++oct) {
+      v += amp * (std::sin(f*x + 1.7f*std::cos(f*z*0.8f))
+               * std::cos(f*y + 2.1f*std::sin(f*x*0.6f))
+               + noise3d(f*x, f*y, f*z) * 0.3f);
+      f *= 2.f;
+      amp *= 0.5f;
+    }
+    return v;
+  }
+  case ScalarFieldType::Supernova: {
+    float r = std::sqrt(x*x + y*y + z*z);
+    float theta = std::atan2(std::sqrt(x*x + z*z), y);
+    float phi = std::atan2(z, x);
+    float shell = std::sin(freq * r) * std::exp(-r * 0.3f);
+    float jet = std::exp(-5.f * (theta - 0.3f) * (theta - 0.3f)) * std::cos(freq * r * 0.5f)
+              + std::exp(-5.f * (theta - 2.84f) * (theta - 2.84f)) * std::cos(freq * r * 0.5f);
+    float spiral = std::sin(phi * 3.f + r * 2.f) * std::exp(-r * 0.5f) * 0.3f;
+    return shell + jet * 0.8f + spiral;
+  }
+  }
+  return 0.f;
 }
 
 // Marching cubes edge table (simplified — 12 edges per cube)
@@ -55,7 +87,8 @@ void generate_isosurface(
     std::vector<float> &positions,
     std::vector<float> &normals,
     std::vector<float> &colors,
-    std::vector<int> &indices)
+    std::vector<int> &indices,
+    ScalarFieldType field_type = ScalarFieldType::Gyroid)
 {
   float dx = (x1 - x0) / nx;
   float dy = (y1 - y0) / ny;
@@ -71,16 +104,16 @@ void generate_isosurface(
     out.y = py + t * (qy - py);
     out.z = pz + t * (qz - pz);
 
-    float gx = (scalar_field(out.x + eps, out.y, out.z, freq)
-              - scalar_field(out.x - eps, out.y, out.z, freq)) / (2.f * eps);
-    float gy = (scalar_field(out.x, out.y + eps, out.z, freq)
-              - scalar_field(out.x, out.y - eps, out.z, freq)) / (2.f * eps);
-    float gz = (scalar_field(out.x, out.y, out.z + eps, freq)
-              - scalar_field(out.x, out.y, out.z - eps, freq)) / (2.f * eps);
+    float gx = (scalar_field(out.x + eps, out.y, out.z, freq, field_type)
+              - scalar_field(out.x - eps, out.y, out.z, freq, field_type)) / (2.f * eps);
+    float gy = (scalar_field(out.x, out.y + eps, out.z, freq, field_type)
+              - scalar_field(out.x, out.y - eps, out.z, freq, field_type)) / (2.f * eps);
+    float gz = (scalar_field(out.x, out.y, out.z + eps, freq, field_type)
+              - scalar_field(out.x, out.y, out.z - eps, freq, field_type)) / (2.f * eps);
     float len = std::sqrt(gx*gx + gy*gy + gz*gz);
     if (len > 0.f) { gx /= len; gy /= len; gz /= len; }
     out.nx = -gx; out.ny = -gy; out.nz = -gz;
-    out.scalar = scalar_field(out.x, out.y, out.z, freq);
+    out.scalar = scalar_field(out.x, out.y, out.z, freq, field_type);
   };
 
   // Simple marching cubes — for each cell, check if isosurface crosses
@@ -93,14 +126,14 @@ void generate_isosurface(
 
         // 8 corner values
         float v[8];
-        v[0] = scalar_field(cx,    cy,    cz,    freq);
-        v[1] = scalar_field(cx+dx, cy,    cz,    freq);
-        v[2] = scalar_field(cx+dx, cy+dy, cz,    freq);
-        v[3] = scalar_field(cx,    cy+dy, cz,    freq);
-        v[4] = scalar_field(cx,    cy,    cz+dz, freq);
-        v[5] = scalar_field(cx+dx, cy,    cz+dz, freq);
-        v[6] = scalar_field(cx+dx, cy+dy, cz+dz, freq);
-        v[7] = scalar_field(cx,    cy+dy, cz+dz, freq);
+        v[0] = scalar_field(cx,    cy,    cz,    freq, field_type);
+        v[1] = scalar_field(cx+dx, cy,    cz,    freq, field_type);
+        v[2] = scalar_field(cx+dx, cy+dy, cz,    freq, field_type);
+        v[3] = scalar_field(cx,    cy+dy, cz,    freq, field_type);
+        v[4] = scalar_field(cx,    cy,    cz+dz, freq, field_type);
+        v[5] = scalar_field(cx+dx, cy,    cz+dz, freq, field_type);
+        v[6] = scalar_field(cx+dx, cy+dy, cz+dz, freq, field_type);
+        v[7] = scalar_field(cx,    cy+dy, cz+dz, freq, field_type);
 
         // Simplified: for each of 6 tetrahedra in the cube, emit triangles
         int cube_index = 0;
@@ -199,6 +232,8 @@ int main(int argc, char **argv)
     float exposure = 0.5f;
     std::string output = "scivis_mpi.ppm";
     bool denoise = false;
+    ScalarFieldType field_type = ScalarFieldType::Gyroid;
+    std::string dataset_name = "gyroid";
 
     for (int i = 1; i < argc; ++i) {
       std::string arg = argv[i];
@@ -209,11 +244,17 @@ int main(int argc, char **argv)
       else if (arg == "--exposure" && i+1 < argc) exposure = std::atof(argv[++i]);
       else if (arg == "-o" && i+1 < argc) output = argv[++i];
       else if (arg == "--denoise") denoise = true;
+      else if (arg == "--dataset" && i+1 < argc) {
+        dataset_name = argv[++i];
+        if (dataset_name == "gyroid") field_type = ScalarFieldType::Gyroid;
+        else if (dataset_name == "turbulence") field_type = ScalarFieldType::Turbulence;
+        else if (dataset_name == "supernova") field_type = ScalarFieldType::Supernova;
+      }
     }
 
     if (rank == 0)
-      std::fprintf(stderr, "Sci-vis MPI render: %d ranks, grid %d³, %dx%d @ %d spp\n",
-          num_ranks, grid_res, width, height, spp);
+      std::fprintf(stderr, "Sci-vis MPI render: %d ranks, dataset=%s, grid %d³, %dx%d @ %d spp\n",
+          num_ranks, dataset_name.c_str(), grid_res, width, height, spp);
 
     // Each rank generates isosurface for its Z-slab of the domain
     float domain_min = -3.14159f, domain_max = 3.14159f;
@@ -225,6 +266,16 @@ int main(int argc, char **argv)
     int nz_per_rank = grid_res / num_ranks;
     if (nz_per_rank < 1) nz_per_rank = 1;
 
+    float iso_value = 0.0f;
+    float field_freq = 2.0f;
+    if (field_type == ScalarFieldType::Turbulence) {
+      field_freq = 1.5f;
+      iso_value = 0.3f;
+    } else if (field_type == ScalarFieldType::Supernova) {
+      field_freq = 3.0f;
+      iso_value = 0.15f;
+    }
+
     std::vector<float> positions, normals_vec, colors_vec;
     std::vector<int> indices_vec;
 
@@ -232,8 +283,9 @@ int main(int argc, char **argv)
     generate_isosurface(domain_min, domain_min, my_z0,
                         domain_max, domain_max, my_z1,
                         grid_res, grid_res, nz_per_rank,
-                        0.0f, 2.0f,
-                        positions, normals_vec, colors_vec, indices_vec);
+                        iso_value, field_freq,
+                        positions, normals_vec, colors_vec, indices_vec,
+                        field_type);
     auto t_mc1 = std::chrono::high_resolution_clock::now();
     double mc_ms = std::chrono::duration<double, std::milli>(t_mc1 - t_mc0).count();
 
@@ -313,10 +365,21 @@ int main(int argc, char **argv)
     }
 
     float aspect = float(width) / float(height);
-    Vec3 cam_pos = {0.f, 4.f, 10.f};
-    Vec3 cam_target = {0.f, 0.f, 0.f};
+    Vec3 cam_pos, cam_target = {0.f, 0.f, 0.f};
     Vec3 cam_up = {0.f, 1.f, 0.f};
-    Camera camera = Camera::make_perspective(cam_pos, cam_target, cam_up, 45.f, aspect);
+    float fov = 45.f;
+
+    if (field_type == ScalarFieldType::Supernova) {
+      cam_pos = {6.f, 3.f, 8.f};
+      fov = 50.f;
+    } else if (field_type == ScalarFieldType::Turbulence) {
+      cam_pos = {0.f, 5.f, 9.f};
+      fov = 50.f;
+    } else {
+      cam_pos = {0.f, 4.f, 10.f};
+    }
+
+    Camera camera = Camera::make_perspective(cam_pos, cam_target, cam_up, fov, aspect);
 
     auto backend = create_best_backend();
     backend->build_accel(scene);
