@@ -28,6 +28,11 @@ add_executable(photon_pbrt_render photon_pbrt_render.cpp)
 
 target_link_libraries(photon_pbrt_render PRIVATE anari_library_photon)
 
+if(PHOTON_MPI_READY)
+  add_executable(photon_mpi_render photon_mpi_render.cpp)
+  target_link_libraries(photon_mpi_render PRIVATE anari_library_photon MPI::MPI_CXX)
+endif()
+
 add_executable(photon_scene_render photon_scene_render.cpp)
 
 target_link_libraries(photon_scene_render PRIVATE anari_library_photon anari anari_test_scenes helium)
