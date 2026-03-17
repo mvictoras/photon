@@ -46,12 +46,22 @@ Production GPU path tracer built with **Kokkos** for portable execution across N
 
 | Backend | Hardware | Status |
 |---------|----------|--------|
-| **Kokkos BVH** | Any (CUDA/HIP/SYCL/OpenMP) | Default — all shading on GPU, zero host sync |
+| **Kokkos BVH** | Any (CUDA/HIP/SYCL/OpenMP) | Portable fallback — all shading on GPU, zero host sync |
+| **OptiX 8** | NVIDIA GPU (RT cores) | **Fastest** — GPU-direct shading in raygen program, 7-29x faster than Kokkos BVH |
 | **Embree 4** | Intel/AMD CPU | Working (CPU↔GPU transfer bottleneck) |
-| **OptiX 8** | NVIDIA GPU (RT cores) | Working (naive integration — shading on CPU, needs megakernel refactor for full RT core speedup) |
 | **HIP RT** | AMD GPU | Stub (ready for implementation) |
 
-Override with `PHOTON_BACKEND=kokkos|embree|optix`.
+Auto-selection: OptiX → Embree → Kokkos. Override with `PHOTON_BACKEND=kokkos|embree|optix`.
+
+### Benchmarks (NVIDIA RTX 5000 Ada, 1024×1024, 128 spp)
+
+| Scene | Triangles | Kokkos BVH | OptiX 8 | Speedup |
+|-------|-----------|-----------|---------|---------|
+| Cornell Box | 36 | 5.4s | 4.9s | 1.1x |
+| Veach MIS | 3K | 1.2s | 0.4s | 3.2x |
+| Spaceship | 457K | 55.8s | 5.7s | 9.8x |
+| Bathroom | 592K | 28.4s | 1.8s | **16x** |
+| Kitchen | 1.4M | 50.2s | 1.7s | **29x** |
 
 ## pbrt-v4 Scene Reader
 
