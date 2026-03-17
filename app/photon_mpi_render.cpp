@@ -86,8 +86,7 @@ void write_ppm(const std::string &file, const std::vector<Pixel> &pixels,
   std::vector<unsigned char> row(size_t(w) * 3);
   for (uint32_t y = 0; y < h; ++y) {
     for (uint32_t x = 0; x < w; ++x) {
-      const uint32_t src_y = h - 1 - y;
-      const Pixel &p = pixels[src_y * w + x];
+      const Pixel &p = pixels[y * w + x];
 
       auto to_u8 = [exposure](float v) -> unsigned char {
         v = aces_filmic(v * exposure);
