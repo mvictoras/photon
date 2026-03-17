@@ -130,10 +130,23 @@ endif()
 
 option(PHOTON_ENABLE_MPI "Enable MPI for data-parallel rendering" OFF)
 set(PHOTON_MPI_READY FALSE CACHE INTERNAL "")
+set(PHOTON_ICET_READY FALSE CACHE INTERNAL "")
 if(PHOTON_ENABLE_MPI)
   find_package(MPI REQUIRED)
   if(MPI_CXX_FOUND)
     set(PHOTON_MPI_READY TRUE CACHE INTERNAL "")
     message(STATUS "MPI found: ${MPI_CXX_COMPILER}")
+
+    set(ICET_USE_OPENGL OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+      icet
+      GIT_REPOSITORY https://gitlab.kitware.com/icet/icet.git
+      GIT_TAG IceT-2.1.1
+      GIT_SHALLOW ON
+    )
+    FetchContent_MakeAvailable(icet)
+    set(PHOTON_ICET_READY TRUE CACHE INTERNAL "")
+    message(STATUS "IceT fetched and built")
   endif()
 endif()
