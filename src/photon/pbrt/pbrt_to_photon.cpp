@@ -413,13 +413,16 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
   Vec3 cam_pos, cam_dir, cam_up;
 
   if (pbrt.camera.has_lookat) {
-    cam_pos = {pbrt.camera.look_from.x, pbrt.camera.look_from.y, pbrt.camera.look_from.z};
-    Vec3 look_target = {pbrt.camera.look_at_pt.x, pbrt.camera.look_at_pt.y, pbrt.camera.look_at_pt.z};
+    cam_pos = {pbrt.camera.look_from.x * pbrt.camera.scale[0],
+               pbrt.camera.look_from.y * pbrt.camera.scale[1],
+               pbrt.camera.look_from.z * pbrt.camera.scale[2]};
+    Vec3 look_target = {pbrt.camera.look_at_pt.x * pbrt.camera.scale[0],
+                        pbrt.camera.look_at_pt.y * pbrt.camera.scale[1],
+                        pbrt.camera.look_at_pt.z * pbrt.camera.scale[2]};
     cam_dir = normalize(look_target - cam_pos);
-    cam_up = normalize(Vec3{pbrt.camera.look_up.x, pbrt.camera.look_up.y, pbrt.camera.look_up.z});
-
-    if (pbrt.camera.scale[0] < 0.f)
-      cam_dir = cam_dir * -1.f;
+    cam_up = normalize(Vec3{pbrt.camera.look_up.x * pbrt.camera.scale[0],
+                            pbrt.camera.look_up.y * pbrt.camera.scale[1],
+                            pbrt.camera.look_up.z * pbrt.camera.scale[2]});
   } else {
     Mat4 world_to_cam = mat4_from_pbrt_column_major(pbrt.camera.transform);
     Mat4 cam_to_world = world_to_cam.inverse();
