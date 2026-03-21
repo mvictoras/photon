@@ -583,27 +583,33 @@ PbrtScene parse_pbrt_file(const std::string &path)
       current_object.clear();
     } else if (t.text == "ObjectInstance") {
       Token name = tok.next();
+      auto it = object_defs.find(name.text);
+      if (it == object_defs.end())
+        continue;
+
+      PbrtInstance inst;
+      inst.object_name = name.text;
+      std::memcpy(inst.transform, state.transform, 16 * sizeof(float));
+      scene.object_instances.push_back(inst);
+
       if (total_triangles >= scene.max_total_triangles)
         continue;
       auto &ic = instance_counts[name.text];
       if (ic >= scene.max_instances_per_object)
         continue;
-      auto it = object_defs.find(name.text);
-      if (it != object_defs.end()) {
-        uint64_t obj_tris = 0;
-        for (const auto &obj_mesh : it->second)
-          obj_tris += obj_mesh.indices.size() / 3;
-        if (total_triangles + obj_tris > scene.max_total_triangles)
-          continue;
-        for (const auto &obj_mesh : it->second) {
-          PbrtTriMesh m = obj_mesh;
-          std::memcpy(m.transform, state.transform, 16 * sizeof(float));
-          m.material_name = obj_mesh.material_name;
-          scene.meshes.push_back(std::move(m));
-        }
-        total_triangles += obj_tris;
-        ic++;
+      uint64_t obj_tris = 0;
+      for (const auto &obj_mesh : it->second)
+        obj_tris += obj_mesh.indices.size() / 3;
+      if (total_triangles + obj_tris > scene.max_total_triangles)
+        continue;
+      for (const auto &obj_mesh : it->second) {
+        PbrtTriMesh m = obj_mesh;
+        std::memcpy(m.transform, state.transform, 16 * sizeof(float));
+        m.material_name = obj_mesh.material_name;
+        scene.meshes.push_back(std::move(m));
       }
+      total_triangles += obj_tris;
+      ic++;
     } else if (t.text == "Material"
                || t.text == "ReverseOrientation"
                || t.text == "TransformBegin" || t.text == "TransformEnd"
@@ -616,6 +622,8 @@ PbrtScene parse_pbrt_file(const std::string &path)
         parse_param(tok);
     }
   }
+
+  scene.object_defs = std::move(object_defs);
 
   return scene;
 }

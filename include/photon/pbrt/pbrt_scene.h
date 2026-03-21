@@ -60,6 +60,11 @@ struct PbrtCamera {
   bool has_lookat{false};
 };
 
+struct PbrtInstance {
+  std::string object_name;
+  float transform[16]{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+};
+
 struct PbrtScene {
   int width{512};
   int height{512};
@@ -70,6 +75,9 @@ struct PbrtScene {
   std::map<std::string, PbrtTexture> textures;
   std::map<std::string, PbrtMaterial> named_materials;
   std::vector<PbrtTriMesh> meshes;
+
+  std::map<std::string, std::vector<PbrtTriMesh>> object_defs;
+  std::vector<PbrtInstance> object_instances;
 
   std::string env_map_filename;
   float env_map_transform[16]{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
