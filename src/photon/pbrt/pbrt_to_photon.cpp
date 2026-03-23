@@ -183,6 +183,11 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
   for (const auto &mesh : pbrt.meshes) {
     Mat4 xfm = mat4_from_pbrt_column_major(mesh.transform);
 
+    f32 det3x3 = xfm.m[0][0] * (xfm.m[1][1]*xfm.m[2][2] - xfm.m[1][2]*xfm.m[2][1])
+               - xfm.m[0][1] * (xfm.m[1][0]*xfm.m[2][2] - xfm.m[1][2]*xfm.m[2][0])
+               + xfm.m[0][2] * (xfm.m[1][0]*xfm.m[2][1] - xfm.m[1][1]*xfm.m[2][0]);
+    const bool flip_winding = det3x3 < 0.f;
+
     u32 mat_id = 0;
     auto it = mat_name_to_id.find(mesh.material_name);
     if (it != mat_name_to_id.end())
@@ -215,8 +220,8 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
 
     for (size_t t = 0; t < ntris; ++t) {
       const int i0 = mesh.indices[t * 3 + 0];
-      const int i1 = mesh.indices[t * 3 + 1];
-      const int i2 = mesh.indices[t * 3 + 2];
+      const int i1 = flip_winding ? mesh.indices[t * 3 + 2] : mesh.indices[t * 3 + 1];
+      const int i2 = flip_winding ? mesh.indices[t * 3 + 1] : mesh.indices[t * 3 + 2];
 
       Vec3 p0 = {mesh.positions[i0*3], mesh.positions[i0*3+1], mesh.positions[i0*3+2]};
       Vec3 p1 = {mesh.positions[i1*3], mesh.positions[i1*3+1], mesh.positions[i1*3+2]};
@@ -401,7 +406,36 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
             env_tex.data[si + 1] * pbrt.env_map_scale,
             env_tex.data[si + 2] * pbrt.env_map_scale};
         }
-      Kokkos::deep_copy(env.pixels, epix_h);
+      Mat4 env_xfm = mat4_from_pbrt_column_major(pbrt.env_map_transform);
+      bool has_env_xfm = false;
+      for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j)
+          if (std::fabs(env_xfm.m[i][j] - ((i==j)?1.f:0.f)) > 1e-4f)
+            has_env_xfm = true;
+
+      if (has_env_xfm) {
+        Mat4 env_inv = env_xfm.inverse();
+        auto rotated = Kokkos::View<Vec3 **, Kokkos::LayoutRight>("env_rot", env.height, env.width);
+        auto rot_h = Kokkos::create_mirror_view(rotated);
+
+        for (u32 py = 0; py < env.height; ++py)
+          for (u32 px = 0; px < env.width; ++px) {
+            f32 u_coord = (f32(px) + 0.5f) / f32(env.width);
+            f32 v_coord = (f32(py) + 0.5f) / f32(env.height);
+            Vec3 dir = EnvironmentMap::uv_to_dir({u_coord, v_coord});
+            Vec3 xfm_dir = normalize(env_inv.transform_direction(dir));
+            Vec2 src_uv = EnvironmentMap::dir_to_uv(xfm_dir);
+            u32 sx = u32(src_uv.x * f32(env.width)) % env.width;
+            u32 sy = u32(src_uv.y * f32(env.height)) % env.height;
+            rot_h(py, px) = epix_h(sy, sx);
+          }
+
+        Kokkos::deep_copy(env.pixels, rot_h);
+        std::fprintf(stderr, "  Applied env map transform\n");
+      } else {
+        Kokkos::deep_copy(env.pixels, epix_h);
+      }
+
       env.marginal_cdf = Kokkos::View<f32 *>("env_marginal", env.height + 1);
       env.conditional_cdf = Kokkos::View<f32 **>("env_conditional", env.height, env.width + 1);
       env.build_cdf();
