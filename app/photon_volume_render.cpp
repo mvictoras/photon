@@ -130,21 +130,21 @@ int main(int argc, char **argv)
     generate_volume(vol.density, res, vol_type, vol.max_density);
 
     if (vol_type == VolumeType::Cloud) {
-      vol.sigma_s = {8.f, 8.f, 8.f};
-      vol.sigma_a = {0.02f, 0.02f, 0.02f};
-      vol.g = 0.6f;
+      vol.sigma_s = {2.f, 2.f, 2.f};
+      vol.sigma_a = {0.005f, 0.005f, 0.005f};
+      vol.g = 0.76f;
     } else if (vol_type == VolumeType::Nebula) {
-      vol.sigma_s = {4.f, 3.f, 6.f};
-      vol.sigma_a = {0.5f, 0.1f, 0.05f};
-      vol.g = 0.3f;
-      vol.emission = {0.2f, 0.05f, 0.4f};
-      vol.emission_strength = 2.f;
+      vol.sigma_s = {0.8f, 0.5f, 1.2f};
+      vol.sigma_a = {0.1f, 0.02f, 0.01f};
+      vol.g = 0.4f;
+      vol.emission = {0.4f, 0.1f, 0.8f};
+      vol.emission_strength = 0.5f;
     } else {
-      vol.sigma_s = {10.f, 6.f, 2.f};
-      vol.sigma_a = {1.f, 0.5f, 0.1f};
-      vol.g = -0.2f;
-      vol.emission = {2.f, 0.8f, 0.2f};
-      vol.emission_strength = 3.f;
+      vol.sigma_s = {3.f, 1.5f, 0.5f};
+      vol.sigma_a = {0.2f, 0.1f, 0.02f};
+      vol.g = -0.3f;
+      vol.emission = {3.f, 1.2f, 0.3f};
+      vol.emission_strength = 1.f;
     }
 
     std::fprintf(stderr, "Generated %s volume: max_density=%.2f\n", dataset.c_str(), vol.max_density);
@@ -201,13 +201,13 @@ int main(int argc, char **argv)
                 L = L + throughput * vol.emission * (vol.emission_strength * d);
               }
 
-              Vec3 sun_dir = normalize(Vec3{1.f, 2.f, 1.f});
+              Vec3 sun_dir = normalize(Vec3{0.5f, 1.f, 0.3f});
               f32 sun_t_enter, sun_t_exit;
               Ray sun_ray{ve.position, sun_dir};
               if (vol.intersect_bounds(sun_ray, sun_t_enter, sun_t_exit)) {
                 f32 tau = 0.f;
-                f32 sun_step = (sun_t_exit - Kokkos::fmax(sun_t_enter, 0.f)) / 8.f;
-                for (int si = 0; si < 8; ++si) {
+                f32 sun_step = (sun_t_exit - Kokkos::fmax(sun_t_enter, 0.f)) / 16.f;
+                for (int si = 0; si < 16; ++si) {
                   f32 st = Kokkos::fmax(sun_t_enter, 0.f) + (f32(si) + 0.5f) * sun_step;
                   Vec3 sp = ve.position + sun_dir * st;
                   tau += vol.sample_density(sp) * max_component(sigma_t_v) * sun_step;
@@ -215,7 +215,7 @@ int main(int argc, char **argv)
                 f32 sun_transmittance = Kokkos::exp(-tau);
                 f32 cos_theta = dot(normalize(dir * -1.f), sun_dir);
                 f32 phase = pdf_hg(cos_theta, vol.g);
-                Vec3 sun_color = {4.f, 3.5f, 2.5f};
+                Vec3 sun_color = {10.f, 9.f, 7.f};
                 L = L + throughput * sun_color * (sun_transmittance * phase * scatter_albedo);
               }
 
