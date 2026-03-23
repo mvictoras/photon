@@ -28,6 +28,10 @@ add_executable(photon_pbrt_render photon_pbrt_render.cpp)
 
 target_link_libraries(photon_pbrt_render PRIVATE anari_library_photon)
 
+add_executable(photon_volume_render photon_volume_render.cpp)
+
+target_link_libraries(photon_volume_render PRIVATE anari_library_photon)
+
 if(PHOTON_MPI_READY)
   add_executable(photon_mpi_render photon_mpi_render.cpp)
   target_link_libraries(photon_mpi_render PRIVATE anari_library_photon MPI::MPI_CXX)
