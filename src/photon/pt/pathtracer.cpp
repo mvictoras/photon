@@ -148,6 +148,7 @@ RenderResult PathTracer::render() const
       const auto lights = scene.lights;
       const auto scene_textures = scene.textures;
       const u32 light_count = scene.light_count;
+      
       const auto emissive_ids = scene.emissive_prim_ids;
       const auto emissive_areas = scene.emissive_prim_areas;
       const u32 emissive_count = scene.emissive_count;
