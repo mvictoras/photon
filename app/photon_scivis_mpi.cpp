@@ -405,20 +405,28 @@ int main(int argc, char **argv)
     std::fprintf(stderr, "Rank %d: rendered in %.1f ms\n", rank, render_ms);
 
     size_t pixel_count = size_t(width) * height;
-    auto color_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.color);
-    auto depth_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.depth);
 
-    std::vector<float> color_rgba(pixel_count * 4);
-    std::vector<float> depth_buf(pixel_count);
-    for (size_t i = 0; i < pixel_count; ++i) {
+    Kokkos::View<float *> d_color_rgba("d_rgba", pixel_count * 4);
+    Kokkos::View<float *> d_depth("d_depth", pixel_count);
+
+    auto res_color = result.color;
+    auto res_depth = result.depth;
+    Kokkos::parallel_for("pack_gpu", pixel_count, KOKKOS_LAMBDA(const size_t i) {
       u32 y = u32(i) / u32(width), x = u32(i) % u32(width);
-      auto c = color_h(y, x);
-      color_rgba[i*4+0] = c.x;
-      color_rgba[i*4+1] = c.y;
-      color_rgba[i*4+2] = c.z;
-      color_rgba[i*4+3] = 1.f;
-      depth_buf[i] = depth_h(y, x);
-    }
+      auto c = res_color(y, x);
+      d_color_rgba(i*4+0) = c.x;
+      d_color_rgba(i*4+1) = c.y;
+      d_color_rgba(i*4+2) = c.z;
+      d_color_rgba(i*4+3) = 1.f;
+      d_depth(i) = res_depth(y, x);
+    });
+    Kokkos::fence();
+
+    auto color_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, d_color_rgba);
+    auto depth_h_flat = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, d_depth);
+
+    std::vector<float> color_rgba(color_h.data(), color_h.data() + pixel_count * 4);
+    std::vector<float> depth_buf(depth_h_flat.data(), depth_h_flat.data() + pixel_count);
 
     auto t2 = std::chrono::high_resolution_clock::now();
 
