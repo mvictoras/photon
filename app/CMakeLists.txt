@@ -25,8 +25,10 @@ target_link_libraries(photon_anari_render PRIVATE anari_library_photon anari)
 target_include_directories(photon_anari_render PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
 
 add_executable(photon_pbrt_render photon_pbrt_render.cpp)
-
 target_link_libraries(photon_pbrt_render PRIVATE anari_library_photon)
+
+add_executable(photon_bdpt_render photon_bdpt_render.cpp)
+target_link_libraries(photon_bdpt_render PRIVATE anari_library_photon)
 
 add_executable(photon_volume_render photon_volume_render.cpp)
 
