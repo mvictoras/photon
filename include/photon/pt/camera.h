@@ -71,6 +71,40 @@ struct Camera {
     return cam;
   }
 
+  KOKKOS_FUNCTION Vec2 viewport_size() const
+  {
+    return {length(horizontal), length(vertical)};
+  }
+
+  KOKKOS_FUNCTION f32 importance(const Vec3 &dir) const
+  {
+    const f32 cos_theta = Kokkos::fabs(dot(dir, w * -1.f));
+    if (cos_theta <= 0.f) return 0.f;
+    const f32 cos2 = cos_theta * cos_theta;
+    const f32 lens_area = lens_radius > 0.f ? PI * lens_radius * lens_radius : 1.f;
+    const f32 viewport_area = length(horizontal) * length(vertical);
+    return 1.f / (lens_area * viewport_area * cos2 * cos2);
+  }
+
+  KOKKOS_FUNCTION bool world_to_raster(const Vec3 &world_pos, int width, int height,
+                                        f32 &raster_x, f32 &raster_y) const
+  {
+    if (is_ortho) return false;
+
+    Vec3 view_dir = normalize(world_pos - origin);
+    f32 cos_theta = dot(view_dir, w * -1.f);
+    if (cos_theta <= 0.f) return false;
+
+    Vec3 focus_point = origin + view_dir * (focus_dist / cos_theta);
+    Vec3 p = focus_point - lower_left;
+    f32 s = dot(p, normalize(horizontal)) / length(horizontal);
+    f32 t = dot(p, normalize(vertical)) / length(vertical);
+    if (s < 0.f || s > 1.f || t < 0.f || t > 1.f) return false;
+    raster_x = s * f32(width);
+    raster_y = (1.f - t) * f32(height);
+    return true;
+  }
+
   KOKKOS_FUNCTION Ray ray(f32 s, f32 t) const
   {
     Rng rng(1u);
