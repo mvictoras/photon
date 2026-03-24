@@ -11,6 +11,7 @@
 
 #include "photon/pbrt/pbrt_parser.h"
 #include "photon/pbrt/pbrt_to_photon.h"
+#include "photon/pt/backend/optix_backend.h"
 #include "photon/pt/backend/ray_backend.h"
 #include "photon/pt/denoiser.h"
 #include "photon/pt/pathtracer.h"
@@ -27,6 +28,7 @@ struct Args {
   int64_t max_instances = -1;
   int64_t max_triangles = -1;
   bool denoise = false;
+  bool use_ias = false;
   float exposure = 1.f;
 };
 
@@ -53,6 +55,8 @@ Args parse_args(int argc, char **argv)
       a.denoise = true;
     else if (arg == "--exposure" && i + 1 < argc)
       a.exposure = std::atof(argv[++i]);
+    else if (arg == "--use-ias")
+      a.use_ias = true;
     else if (arg[0] != '-')
       a.scene_path = arg;
   }
@@ -110,7 +114,7 @@ int main(int argc, char **argv)
     std::fprintf(stderr, "Parsing: %s\n", args.scene_path.c_str());
 
     auto t0 = std::chrono::high_resolution_clock::now();
-    auto pbrt_scene = photon::pbrt::parse_pbrt_file(args.scene_path);
+    auto pbrt_scene = photon::pbrt::parse_pbrt_file(args.scene_path, args.use_ias);
     auto t1 = std::chrono::high_resolution_clock::now();
     double parse_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
@@ -140,7 +144,31 @@ int main(int argc, char **argv)
         converted.scene.material_count, converted.scene.light_count);
 
     auto backend = photon::pt::create_best_backend();
+
+#ifdef PHOTON_HAS_OPTIX
+    if (!pbrt_scene.object_instances.empty() && !pbrt_scene.object_defs.empty()) {
+      auto *optix_backend = dynamic_cast<photon::pt::OptixBackend *>(backend.get());
+      if (optix_backend) {
+        std::vector<photon::pbrt::PbrtTriMesh> flat_obj_meshes;
+        std::vector<photon::pbrt::PbrtInstance> sorted_instances;
+        for (const auto &[name, meshes] : pbrt_scene.object_defs)
+          for (const auto &m : meshes) {
+            photon::pbrt::PbrtTriMesh copy = m;
+            copy.material_name = name;
+            flat_obj_meshes.push_back(copy);
+          }
+        sorted_instances = pbrt_scene.object_instances;
+        std::fprintf(stderr, "Using OptiX IAS: %zu objects, %zu instances\n",
+            pbrt_scene.object_defs.size(), sorted_instances.size());
+        optix_backend->build_accel_instanced(converted.scene, &flat_obj_meshes, &sorted_instances);
+        goto backend_built;
+      }
+    }
+#endif
     backend->build_accel(converted.scene);
+#ifdef PHOTON_HAS_OPTIX
+    backend_built:;
+#endif
 
     photon::pt::PathTracer pt;
     pt.params.width = uint32_t(pbrt_scene.width);

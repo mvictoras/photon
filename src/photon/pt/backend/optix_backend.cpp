@@ -1,12 +1,14 @@
 #ifdef PHOTON_HAS_OPTIX
 
 #include "photon/pt/backend/optix_backend.h"
+#include "photon/pt/math_mat4.h"
 #include "photon/pt/scene.h"
 
 #include <optix_function_table_definition.h>
 #include <optix_stubs.h>
 #include <cuda.h>
 #include <cstring>
+#include <map>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
@@ -24,6 +26,28 @@ static constexpr bool needs_staging =
 #endif
 
 namespace {
+
+static Mat4 col_major_to_mat4(const float *cm)
+{
+  Mat4 m{};
+  for (int col = 0; col < 4; ++col)
+    for (int row = 0; row < 4; ++row)
+      m.m[row][col] = cm[col * 4 + row];
+  return m;
+}
+
+struct MeshDataHost {
+  float3 *positions;
+  unsigned int *indices;
+  float3 *normals;
+  float2 *texcoords;
+  unsigned int *material_ids;
+  float3 *vertex_colors;
+  unsigned int has_normals;
+  unsigned int has_texcoords;
+  unsigned int has_material_ids;
+  unsigned int has_vertex_colors;
+};
 
 struct Params {
   OptixTraversableHandle handle;
@@ -49,6 +73,9 @@ struct Params {
 
   unsigned int count;
   unsigned int mode;
+  unsigned int use_sbt_data;
+  MeshDataHost *object_meshes;
+  unsigned int object_count;
 };
 
 template <typename T>
@@ -160,6 +187,9 @@ OptixBackend::~OptixBackend()
   if (m_pipeline) optixPipelineDestroy(m_pipeline);
   if (m_module) optixModuleDestroy(m_module);
   if (m_gas_buffer) cudaFree(reinterpret_cast<void *>(m_gas_buffer));
+  if (m_ias_buffer) cudaFree(reinterpret_cast<void *>(m_ias_buffer));
+  for (auto buf : m_child_ias_buffers) if (buf) cudaFree(reinterpret_cast<void *>(buf));
+  if (m_d_object_meshes) cudaFree(reinterpret_cast<void *>(m_d_object_meshes));
   if (m_d_params) cudaFree(reinterpret_cast<void *>(m_d_params));
   if (m_context) optixDeviceContextDestroy(m_context);
   if (m_stream) cudaStreamDestroy(m_stream);
@@ -173,9 +203,9 @@ void OptixBackend::create_pipeline()
   if (m_pipeline) return;
 
   OptixPipelineCompileOptions pipeline_compile_options{};
-  pipeline_compile_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_SINGLE_GAS;
+  pipeline_compile_options.traversableGraphFlags = OPTIX_TRAVERSABLE_GRAPH_FLAG_ALLOW_ANY;
   pipeline_compile_options.usesMotionBlur = 0;
-  pipeline_compile_options.numPayloadValues = 5;
+  pipeline_compile_options.numPayloadValues = 6;
   pipeline_compile_options.numAttributeValues = 2;
   pipeline_compile_options.exceptionFlags = OPTIX_EXCEPTION_FLAG_NONE;
   pipeline_compile_options.pipelineLaunchParamsVariableName = "params";
@@ -360,6 +390,298 @@ void OptixBackend::build_accel(const Scene &scene)
   }
 }
 
+OptixTraversableHandle OptixBackend::build_gas_for_mesh(const TriangleMesh &mesh, ObjectGAS &out)
+{
+  auto pos_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.positions);
+  auto idx_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.indices);
+  const size_t vc = pos_h.extent(0), tc = idx_h.extent(0) / 3;
+
+  std::vector<float3> verts(vc);
+  std::vector<uint3> tris(tc);
+  for (size_t i = 0; i < vc; ++i) verts[i] = make_float3(pos_h(i).x, pos_h(i).y, pos_h(i).z);
+  for (size_t i = 0; i < tc; ++i) tris[i] = make_uint3(idx_h(i*3), idx_h(i*3+1), idx_h(i*3+2));
+
+  check_cuda(cudaMalloc(reinterpret_cast<void**>(&out.d_positions), vc*sizeof(float3)), "gas_pos");
+  check_cuda(cudaMalloc(reinterpret_cast<void**>(&out.d_indices), tc*sizeof(uint3)), "gas_idx");
+  check_cuda(cudaMemcpy(reinterpret_cast<void*>(out.d_positions), verts.data(), vc*sizeof(float3), cudaMemcpyHostToDevice), "gas_pos_cp");
+  check_cuda(cudaMemcpy(reinterpret_cast<void*>(out.d_indices), tris.data(), tc*sizeof(uint3), cudaMemcpyHostToDevice), "gas_idx_cp");
+
+  if (mesh.has_normals()) {
+    auto n_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.normals);
+    check_cuda(cudaMalloc(reinterpret_cast<void**>(&out.d_normals), vc*sizeof(float3)), "gas_n");
+    std::vector<float3> nv(vc);
+    for (size_t i = 0; i < vc; ++i) nv[i] = make_float3(n_h(i).x, n_h(i).y, n_h(i).z);
+    check_cuda(cudaMemcpy(reinterpret_cast<void*>(out.d_normals), nv.data(), vc*sizeof(float3), cudaMemcpyHostToDevice), "gas_n_cp");
+  }
+  if (mesh.has_material_ids()) {
+    auto m_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.material_ids);
+    check_cuda(cudaMalloc(reinterpret_cast<void**>(&out.d_material_ids), tc*sizeof(unsigned int)), "gas_mat");
+    check_cuda(cudaMemcpy(reinterpret_cast<void*>(out.d_material_ids), m_h.data(), tc*sizeof(unsigned int), cudaMemcpyHostToDevice), "gas_mat_cp");
+  }
+
+  out.vertex_count = u32(vc); out.tri_count = u32(tc);
+
+  OptixBuildInput bi{};
+  bi.type = OPTIX_BUILD_INPUT_TYPE_TRIANGLES;
+  bi.triangleArray.vertexBuffers = &out.d_positions;
+  bi.triangleArray.numVertices = unsigned(vc);
+  bi.triangleArray.vertexFormat = OPTIX_VERTEX_FORMAT_FLOAT3;
+  bi.triangleArray.vertexStrideInBytes = sizeof(float3);
+  bi.triangleArray.indexBuffer = out.d_indices;
+  bi.triangleArray.numIndexTriplets = unsigned(tc);
+  bi.triangleArray.indexFormat = OPTIX_INDICES_FORMAT_UNSIGNED_INT3;
+  bi.triangleArray.indexStrideInBytes = sizeof(uint3);
+  unsigned int gf = OPTIX_GEOMETRY_FLAG_NONE;
+  bi.triangleArray.flags = &gf;
+  bi.triangleArray.numSbtRecords = 1;
+
+  OptixAccelBuildOptions ao{}; ao.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE; ao.operation = OPTIX_BUILD_OPERATION_BUILD;
+  OptixAccelBufferSizes bs{};
+  check_optix(optixAccelComputeMemoryUsage(m_context, &ao, &bi, 1, &bs), "ias_mem");
+
+  CUdeviceptr d_temp = 0;
+  check_cuda(cudaMalloc(reinterpret_cast<void**>(&d_temp), bs.tempSizeInBytes), "tmp");
+  check_cuda(cudaMalloc(reinterpret_cast<void**>(&out.buffer), bs.outputSizeInBytes), "gas_buf");
+  check_optix(optixAccelBuild(m_context, 0, &ao, &bi, 1, d_temp, bs.tempSizeInBytes,
+      out.buffer, bs.outputSizeInBytes, &out.handle, nullptr, 0), "gas_build");
+  cudaFree(reinterpret_cast<void*>(d_temp));
+
+  size_t free_mem = 0, total_mem = 0;
+  cudaMemGetInfo(&free_mem, &total_mem);
+  std::fprintf(stderr, "[photon] GAS built: %u tris, %.1f MB output | GPU free: %.0f MB / %.0f MB\n",
+      out.tri_count, double(bs.outputSizeInBytes)/(1<<20),
+      double(free_mem)/(1<<20), double(total_mem)/(1<<20));
+
+  return out.handle;
+}
+
+static OptixTraversableHandle build_single_ias(OptixDeviceContext ctx,
+    const std::vector<OptixInstance> &instances,
+    CUdeviceptr &out_buffer)
+{
+  if (instances.empty()) return 0;
+
+  void *d_inst = nullptr;
+  const size_t inst_bytes = instances.size() * sizeof(OptixInstance);
+  check_cuda(cudaMallocManaged(&d_inst, inst_bytes), "ias_inst");
+  std::memcpy(d_inst, instances.data(), inst_bytes);
+
+  OptixBuildInput bi{};
+  bi.type = OPTIX_BUILD_INPUT_TYPE_INSTANCES;
+  bi.instanceArray.instances = reinterpret_cast<CUdeviceptr>(d_inst);
+  bi.instanceArray.numInstances = unsigned(instances.size());
+
+  OptixAccelBuildOptions ao{};
+  ao.buildFlags = OPTIX_BUILD_FLAG_PREFER_FAST_TRACE;
+  ao.operation  = OPTIX_BUILD_OPERATION_BUILD;
+
+  OptixAccelBufferSizes bs{};
+  check_optix(optixAccelComputeMemoryUsage(ctx, &ao, &bi, 1, &bs), "ias_mem");
+
+  CUdeviceptr d_temp = 0;
+  check_cuda(cudaMalloc(reinterpret_cast<void**>(&d_temp), bs.tempSizeInBytes), "ias_temp");
+  if (out_buffer) { cudaFree(reinterpret_cast<void*>(out_buffer)); out_buffer = 0; }
+  check_cuda(cudaMalloc(reinterpret_cast<void**>(&out_buffer), bs.outputSizeInBytes), "ias_buf");
+
+  OptixTraversableHandle handle = 0;
+  check_optix(optixAccelBuild(ctx, 0, &ao, &bi, 1,
+      d_temp, bs.tempSizeInBytes, out_buffer, bs.outputSizeInBytes,
+      &handle, nullptr, 0), "ias_build");
+
+  cudaFree(reinterpret_cast<void*>(d_temp));
+  cudaFree(d_inst);
+  return handle;
+}
+
+void OptixBackend::build_ias(const std::vector<ObjectGAS> &gas_list,
+                              const std::vector<photon::pbrt::PbrtInstance> &instances)
+{
+  if (instances.empty() || gas_list.empty()) return;
+
+  const u32 n_obj = u32(gas_list.size());
+
+  std::map<std::string, u32> name_to_idx;
+  std::vector<std::string> obj_names;
+  for (const auto &inst : instances) {
+    if (name_to_idx.find(inst.object_name) == name_to_idx.end()) {
+      name_to_idx[inst.object_name] = u32(obj_names.size());
+      obj_names.push_back(inst.object_name);
+    }
+  }
+
+  std::vector<std::vector<OptixInstance>> per_obj_instances(n_obj);
+  for (const auto &inst : instances) {
+    auto it = name_to_idx.find(inst.object_name);
+    if (it == name_to_idx.end()) continue;
+    const u32 obj_idx = it->second;
+    if (obj_idx >= n_obj || gas_list[obj_idx].handle == 0) continue;
+
+    Mat4 xfm = col_major_to_mat4(inst.transform);
+    OptixInstance oi{};
+    oi.instanceId      = obj_idx;
+    oi.sbtOffset       = obj_idx;
+    oi.visibilityMask  = 0xFF;
+    oi.flags           = OPTIX_INSTANCE_FLAG_NONE;
+    oi.traversableHandle = gas_list[obj_idx].handle;
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 4; ++c)
+        oi.transform[r*4+c] = xfm.m[r][c];
+    per_obj_instances[obj_idx].push_back(oi);
+  }
+
+  m_child_ias_buffers.clear();
+  m_child_ias_buffers.resize(n_obj, 0);
+
+  std::vector<OptixInstance> top_level_instances;
+  top_level_instances.reserve(n_obj);
+
+  static const float identity[12] = {1,0,0,0, 0,1,0,0, 0,0,1,0};
+
+  for (u32 oi = 0; oi < n_obj; ++oi) {
+    if (per_obj_instances[oi].empty()) continue;
+
+    std::fprintf(stderr, "[photon] Building child IAS %u/%u: %zu instances\n",
+        oi+1, n_obj, per_obj_instances[oi].size());
+
+    OptixTraversableHandle child_handle =
+        build_single_ias(m_context, per_obj_instances[oi], m_child_ias_buffers[oi]);
+    per_obj_instances[oi].clear();
+    per_obj_instances[oi].shrink_to_fit();
+    if (!child_handle) continue;
+
+    OptixInstance top{};
+    top.instanceId      = oi;
+    top.sbtOffset       = 0;
+    top.visibilityMask  = 0xFF;
+    top.flags           = OPTIX_INSTANCE_FLAG_NONE;
+    top.traversableHandle = child_handle;
+    std::memcpy(top.transform, identity, sizeof(identity));
+    top_level_instances.push_back(top);
+  }
+
+  if (top_level_instances.empty()) return;
+
+  std::fprintf(stderr, "[photon] Building top-level IAS: %zu child IAS\n",
+      top_level_instances.size());
+
+  m_ias_handle = build_single_ias(m_context, top_level_instances, m_ias_buffer);
+
+  m_has_ias = true;
+  m_object_count = n_obj;
+
+  std::vector<MeshDataHost> mesh_table(n_obj);
+  for (u32 oi = 0; oi < n_obj; ++oi) {
+    mesh_table[oi].positions     = reinterpret_cast<float3 *>(gas_list[oi].d_positions);
+    mesh_table[oi].indices       = reinterpret_cast<unsigned int *>(gas_list[oi].d_indices);
+    mesh_table[oi].normals       = reinterpret_cast<float3 *>(gas_list[oi].d_normals);
+    mesh_table[oi].texcoords     = nullptr;
+    mesh_table[oi].material_ids  = reinterpret_cast<unsigned int *>(gas_list[oi].d_material_ids);
+    mesh_table[oi].vertex_colors = nullptr;
+    mesh_table[oi].has_normals       = gas_list[oi].d_normals     ? 1 : 0;
+    mesh_table[oi].has_texcoords     = 0;
+    mesh_table[oi].has_material_ids  = gas_list[oi].d_material_ids ? 1 : 0;
+    mesh_table[oi].has_vertex_colors = 0;
+  }
+  if (m_d_object_meshes) { cudaFree(reinterpret_cast<void*>(m_d_object_meshes)); m_d_object_meshes = 0; }
+  check_cuda(cudaMalloc(reinterpret_cast<void**>(&m_d_object_meshes), n_obj * sizeof(MeshDataHost)), "obj_mesh_tbl");
+  check_cuda(cudaMemcpy(reinterpret_cast<void*>(m_d_object_meshes), mesh_table.data(),
+      n_obj * sizeof(MeshDataHost), cudaMemcpyHostToDevice), "obj_mesh_tbl_cp");
+
+  OptixProgramGroup hit_pg = nullptr;
+  {
+    OptixProgramGroupDesc hd{};
+    hd.kind = OPTIX_PROGRAM_GROUP_KIND_HITGROUP;
+    hd.hitgroup.moduleCH = m_module;
+    hd.hitgroup.entryFunctionNameCH = "__closesthit__ch";
+    OptixProgramGroupOptions pgo{};
+    char log[512]{}; size_t ls = sizeof(log);
+    check_optix(optixProgramGroupCreate(m_context, &hd, 1, &pgo, log, &ls, &hit_pg), "ias_hit_pg");
+  }
+
+  struct HgRecord { char header[OPTIX_SBT_RECORD_HEADER_SIZE]; MeshDataHost data; };
+  std::vector<HgRecord> hg_records(n_obj);
+  for (u32 oi = 0; oi < n_obj; ++oi) {
+    optixSbtRecordPackHeader(hit_pg, &hg_records[oi]);
+    auto &md = hg_records[oi].data;
+    md = mesh_table[oi];
+  }
+  CUdeviceptr d_hg = 0;
+  check_cuda(cudaMalloc(reinterpret_cast<void**>(&d_hg), n_obj * sizeof(HgRecord)), "hg_rec");
+  check_cuda(cudaMemcpy(reinterpret_cast<void*>(d_hg), hg_records.data(),
+      n_obj * sizeof(HgRecord), cudaMemcpyHostToDevice), "hg_rec_cp");
+  m_sbt.hitgroupRecordBase           = d_hg;
+  m_sbt.hitgroupRecordStrideInBytes  = sizeof(HgRecord);
+  m_sbt.hitgroupRecordCount          = n_obj;
+  optixProgramGroupDestroy(hit_pg);
+
+  std::fprintf(stderr, "[photon] OptiX two-level IAS: %zu objects, %zu total instances\n",
+      top_level_instances.size(), instances.size());
+}
+
+void OptixBackend::build_accel_instanced(const Scene &scene,
+    const std::vector<photon::pbrt::PbrtTriMesh> *obj_meshes,
+    const std::vector<photon::pbrt::PbrtInstance> *instances)
+{
+  if (!obj_meshes || !instances || obj_meshes->empty() || instances->empty()) {
+    build_accel(scene);
+    return;
+  }
+
+  if (!m_pipeline) create_pipeline();
+
+  std::map<std::string, u32> obj_name_to_idx;
+  std::vector<std::string> obj_names;
+  for (const auto &inst : *instances) {
+    if (obj_name_to_idx.find(inst.object_name) == obj_name_to_idx.end()) {
+      obj_name_to_idx[inst.object_name] = u32(obj_names.size());
+      obj_names.push_back(inst.object_name);
+    }
+  }
+
+  m_object_gas.clear();
+  m_object_gas.resize(obj_names.size());
+
+  for (u32 oi = 0; oi < u32(obj_names.size()); ++oi) {
+    const std::string &name = obj_names[oi];
+    std::vector<const photon::pbrt::PbrtTriMesh*> meshes;
+    for (const auto &m : *obj_meshes)
+      if (m.material_name == name)
+        meshes.push_back(&m);
+    if (meshes.empty()) continue;
+
+    uint64_t total_verts = 0, total_tris = 0;
+    for (auto *m : meshes) {
+      total_verts += m->positions.size() / 3;
+      total_tris  += m->indices.size() / 3;
+    }
+    if (total_tris == 0) continue;
+
+    TriangleMesh tm;
+    tm.positions = Kokkos::View<Vec3*>("p", total_verts);
+    tm.indices   = Kokkos::View<u32*> ("i", total_tris * 3);
+    auto ph = Kokkos::create_mirror_view(tm.positions);
+    auto ih = Kokkos::create_mirror_view(tm.indices);
+    uint64_t voff = 0, ioff = 0;
+    for (auto *mesh : meshes) {
+      const uint64_t nv = mesh->positions.size() / 3;
+      const uint64_t ni = mesh->indices.size();
+      for (uint64_t v = 0; v < nv; ++v)
+        ph(voff + v) = {mesh->positions[v*3], mesh->positions[v*3+1], mesh->positions[v*3+2]};
+      for (uint64_t i = 0; i < ni; ++i)
+        ih(ioff + i) = u32(mesh->indices[i]) + u32(voff);
+      voff += nv;
+      ioff += ni;
+    }
+    Kokkos::deep_copy(tm.positions, ph);
+    Kokkos::deep_copy(tm.indices,   ih);
+    build_gas_for_mesh(tm, m_object_gas[oi]);
+  }
+
+  build_ias(m_object_gas, *instances);
+  std::fprintf(stderr, "[photon] OptiX IAS: %zu objects, %zu instances\n",
+      obj_names.size(), instances->size());
+}
+
 void OptixBackend::trace_closest(const RayBatch &rays, HitBatch &hits)
 {
   const u32 n = rays.count;
@@ -373,7 +695,7 @@ void OptixBackend::trace_closest(const RayBatch &rays, HitBatch &hits)
   }
 
   Params params{};
-  params.handle = m_gas_handle;
+  params.handle = m_has_ias ? m_ias_handle : m_gas_handle;
   params.origins    = reinterpret_cast<float3 *>(needs_staging ? m_d_ray_origins    : rays.origins.data());
   params.directions = reinterpret_cast<float3 *>(needs_staging ? m_d_ray_directions : rays.directions.data());
   params.tmin       = reinterpret_cast<float *> (needs_staging ? m_d_ray_tmin       : rays.tmin.data());
@@ -404,6 +726,9 @@ void OptixBackend::trace_closest(const RayBatch &rays, HitBatch &hits)
 
   params.count = n;
   params.mode = 0;
+  params.use_sbt_data = m_has_ias ? 1u : 0u;
+  params.object_meshes = m_has_ias ? reinterpret_cast<MeshDataHost*>(m_d_object_meshes) : nullptr;
+  params.object_count = m_has_ias ? m_object_count : 0u;
 
   check_cuda(cudaMemcpy(reinterpret_cast<void *>(m_d_params), &params, sizeof(Params), cudaMemcpyHostToDevice), "params cp");
   check_optix(optixLaunch(m_pipeline, m_stream, m_d_params, sizeof(Params), &m_sbt, n, 1, 1), "launch closest");
@@ -427,7 +752,7 @@ void OptixBackend::trace_occluded(const RayBatch &rays, Kokkos::View<u32 *> occl
   }
 
   Params params{};
-  params.handle = m_gas_handle;
+  params.handle = m_has_ias ? m_ias_handle : m_gas_handle;
   params.origins    = reinterpret_cast<float3 *>(needs_staging ? m_d_ray_origins    : rays.origins.data());
   params.directions = reinterpret_cast<float3 *>(needs_staging ? m_d_ray_directions : rays.directions.data());
   params.tmin       = reinterpret_cast<float *> (needs_staging ? m_d_ray_tmin       : rays.tmin.data());
@@ -436,6 +761,9 @@ void OptixBackend::trace_occluded(const RayBatch &rays, Kokkos::View<u32 *> occl
   params.occluded   = reinterpret_cast<unsigned int *>(needs_staging ? m_d_occluded : occluded.data());
   params.count = n;
   params.mode = 1;
+  params.use_sbt_data = 0;
+  params.object_meshes = nullptr;
+  params.object_count = 0;
 
   check_cuda(cudaMemcpy(reinterpret_cast<void *>(m_d_params), &params, sizeof(Params), cudaMemcpyHostToDevice), "params cp");
   check_optix(optixLaunch(m_pipeline, m_stream, m_d_params, sizeof(Params), &m_sbt, n, 1, 1), "launch occluded");

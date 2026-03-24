@@ -229,7 +229,7 @@ static std::string preprocess_includes(const std::string &path, int depth = 0)
   return result;
 }
 
-PbrtScene parse_pbrt_file(const std::string &path)
+PbrtScene parse_pbrt_file(const std::string &path, bool use_instancing)
 {
   std::string base_dir = resolve_dir(path);
   g_root_dir = base_dir;
@@ -237,6 +237,7 @@ PbrtScene parse_pbrt_file(const std::string &path)
 
   Tokenizer tok(content);
   PbrtScene scene;
+  scene.use_instancing = use_instancing;
 
   std::stack<ParseState> state_stack;
   ParseState state;
@@ -591,6 +592,8 @@ PbrtScene parse_pbrt_file(const std::string &path)
       inst.object_name = name.text;
       std::memcpy(inst.transform, state.transform, 16 * sizeof(float));
       scene.object_instances.push_back(inst);
+
+      if (scene.use_instancing) continue;
 
       if (total_triangles >= scene.max_total_triangles)
         continue;

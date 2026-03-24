@@ -5,6 +5,6 @@
 
 namespace photon::pbrt {
 
-PbrtScene parse_pbrt_file(const std::string &path);
+PbrtScene parse_pbrt_file(const std::string &path, bool use_instancing = false);
 
 }
