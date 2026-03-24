@@ -64,7 +64,11 @@ size_t bytes_for(ANARIDataType type, uint64_t n1, uint64_t n2 = 1, uint64_t n3 =
 
 }
 
-PhotonDevice::PhotonDevice(ANARILibrary) {}
+PhotonDevice::PhotonDevice(ANARILibrary)
+{
+  if (!Kokkos::is_initialized())
+    Kokkos::initialize();
+}
 
 uintptr_t PhotonDevice::alloc_handle(ANARIDataType t)
 {
@@ -243,13 +247,48 @@ ANARIInstance PhotonDevice::newInstance(const char *type)
   return (ANARIInstance)h;
 }
 
-const char **PhotonDevice::getObjectSubtypes(ANARIDataType)
+const char **PhotonDevice::getObjectSubtypes(ANARIDataType objectType)
 {
+  static const char *renderer[] = {"default", nullptr};
+  static const char *camera[] = {"perspective", nullptr};
+  static const char *light[] = {"directional", "point", "quad", nullptr};
+  static const char *geometry[] = {"triangle", "sphere", "cylinder", nullptr};
+  static const char *material[] = {"matte", "physicallyBased", nullptr};
+  static const char *sampler[] = {"image2D", nullptr};
   static const char *empty[] = {nullptr};
-  return empty;
+
+  switch (objectType) {
+  case ANARI_RENDERER:
+    return renderer;
+  case ANARI_CAMERA:
+    return camera;
+  case ANARI_LIGHT:
+    return light;
+  case ANARI_GEOMETRY:
+    return geometry;
+  case ANARI_MATERIAL:
+    return material;
+  case ANARI_SAMPLER:
+    return sampler;
+  default:
+    return empty;
+  }
 }
 
-const void *PhotonDevice::getObjectInfo(ANARIDataType, const char *, const char *, ANARIDataType) { return nullptr; }
+const void *PhotonDevice::getObjectInfo(
+    ANARIDataType objectType,
+    const char *,
+    const char *infoName,
+    ANARIDataType infoType)
+{
+  if (objectType == ANARI_DEVICE && infoName
+      && std::strcmp(infoName, "extension") == 0
+      && infoType == ANARI_STRING_LIST) {
+    static const char *extensions[] = {nullptr};
+    return extensions;
+  }
+  return nullptr;
+}
 
 const void *PhotonDevice::getParameterInfo(
     ANARIDataType, const char *, const char *, ANARIDataType, const char *, ANARIDataType)
@@ -585,19 +624,22 @@ const void *PhotonDevice::frameBufferMap(ANARIFrame fb, const char *channel, uin
     return m_fb_bytes.data();
   }
 
-  if (std::strcmp(chan, "depth") == 0) {
+  if (std::strcmp(chan, "depth") == 0
+      || std::strcmp(chan, "channel.depth") == 0) {
     if (t)
       *t = ANARI_FLOAT32;
     return m_channel_depth.data();
   }
 
-  if (std::strcmp(chan, "normal") == 0) {
+  if (std::strcmp(chan, "normal") == 0
+      || std::strcmp(chan, "channel.normal") == 0) {
     if (t)
       *t = ANARI_FLOAT32_VEC3;
     return m_channel_normal.data();
   }
 
-  if (std::strcmp(chan, "albedo") == 0) {
+  if (std::strcmp(chan, "albedo") == 0
+      || std::strcmp(chan, "channel.albedo") == 0) {
     if (t)
       *t = ANARI_FLOAT32_VEC3;
     return m_channel_albedo.data();
