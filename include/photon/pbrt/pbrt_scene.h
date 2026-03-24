@@ -86,6 +86,7 @@ struct PbrtScene {
 
   uint64_t max_instances_per_object{500};
   uint64_t max_total_triangles{500000000};
+  bool use_instancing{false};
 };
 
 }

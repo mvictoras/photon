@@ -1,8 +1,10 @@
 #pragma once
 #ifdef PHOTON_HAS_OPTIX
 
+#include "photon/pbrt/pbrt_scene.h"
 #include "photon/pt/backend/ray_backend.h"
 #include "photon/pt/geom/triangle_mesh.h"
+#include <vector>
 
 #include <cuda_runtime.h>
 #include <optix.h>
@@ -14,6 +16,9 @@ struct OptixBackend : RayBackend {
   ~OptixBackend() override;
 
   void build_accel(const Scene &scene) override;
+  void build_accel_instanced(const Scene &scene,
+                              const std::vector<photon::pbrt::PbrtTriMesh> *object_meshes_ptr,
+                              const std::vector<photon::pbrt::PbrtInstance> *instances_ptr);
   void trace_closest(const RayBatch &rays, HitBatch &hits) override;
   void trace_occluded(const RayBatch &rays, Kokkos::View<u32 *> occluded) override;
   const char *name() const override { return "optix"; }
@@ -47,10 +52,32 @@ private:
 
   cudaStream_t m_stream{nullptr};
 
+  struct ObjectGAS {
+    OptixTraversableHandle handle{0};
+    CUdeviceptr buffer{0};
+    CUdeviceptr d_positions{0};
+    CUdeviceptr d_indices{0};
+    CUdeviceptr d_normals{0};
+    CUdeviceptr d_texcoords{0};
+    CUdeviceptr d_material_ids{0};
+    CUdeviceptr d_vertex_colors{0};
+    u32 vertex_count{0};
+    u32 tri_count{0};
+  };
+  std::vector<ObjectGAS> m_object_gas;
+  OptixTraversableHandle m_ias_handle{0};
+  CUdeviceptr m_ias_buffer{0};
+  std::vector<CUdeviceptr> m_child_ias_buffers;
+  CUdeviceptr m_d_object_meshes{0};
+  u32 m_object_count{0};
+  bool m_has_ias{false};
+
   void create_pipeline();
   void free_device_mesh_buffers();
   void ensure_staging_buffers(u32 count);
   void free_staging_buffers();
+  OptixTraversableHandle build_gas_for_mesh(const TriangleMesh &mesh, ObjectGAS &out);
+  void build_ias(const std::vector<ObjectGAS> &gas_list, const std::vector<photon::pbrt::PbrtInstance> &instances);
 };
 
 }
