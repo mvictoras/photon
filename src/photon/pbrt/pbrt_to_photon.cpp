@@ -437,6 +437,7 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
         ? pbrt.camera.focaldistance : length(cam_dir);
   }
 
+  result.mat_name_to_id = mat_name_to_id;
   return result;
 }
 
