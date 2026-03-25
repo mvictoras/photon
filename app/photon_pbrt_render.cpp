@@ -154,13 +154,14 @@ int main(int argc, char **argv)
         for (const auto &[name, meshes] : pbrt_scene.object_defs)
           for (const auto &m : meshes) {
             photon::pbrt::PbrtTriMesh copy = m;
-            copy.material_name = name;
+            copy.object_name = name;
             flat_obj_meshes.push_back(copy);
           }
         sorted_instances = pbrt_scene.object_instances;
         std::fprintf(stderr, "Using OptiX IAS: %zu objects, %zu instances\n",
             pbrt_scene.object_defs.size(), sorted_instances.size());
-        optix_backend->build_accel_instanced(converted.scene, &flat_obj_meshes, &sorted_instances);
+        optix_backend->build_accel_instanced(converted.scene, &flat_obj_meshes, &sorted_instances,
+            &converted.mat_name_to_id);
         goto backend_built;
       }
     }

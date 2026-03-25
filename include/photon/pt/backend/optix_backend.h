@@ -4,6 +4,8 @@
 #include "photon/pbrt/pbrt_scene.h"
 #include "photon/pt/backend/ray_backend.h"
 #include "photon/pt/geom/triangle_mesh.h"
+#include <map>
+#include <string>
 #include <vector>
 
 #include <cuda_runtime.h>
@@ -18,7 +20,8 @@ struct OptixBackend : RayBackend {
   void build_accel(const Scene &scene) override;
   void build_accel_instanced(const Scene &scene,
                               const std::vector<photon::pbrt::PbrtTriMesh> *object_meshes_ptr,
-                              const std::vector<photon::pbrt::PbrtInstance> *instances_ptr);
+                              const std::vector<photon::pbrt::PbrtInstance> *instances_ptr,
+                              const std::map<std::string, u32> *mat_name_to_id);
   void trace_closest(const RayBatch &rays, HitBatch &hits) override;
   void trace_occluded(const RayBatch &rays, Kokkos::View<u32 *> occluded) override;
   const char *name() const override { return "optix"; }
@@ -77,7 +80,7 @@ private:
   void ensure_staging_buffers(u32 count);
   void free_staging_buffers();
   OptixTraversableHandle build_gas_for_mesh(const TriangleMesh &mesh, ObjectGAS &out);
-  void build_ias(const std::vector<ObjectGAS> &gas_list, const std::vector<photon::pbrt::PbrtInstance> &instances);
+  void build_ias(const std::vector<ObjectGAS> &gas_list, const std::vector<photon::pbrt::PbrtInstance> &instances, const ObjectGAS *scene_gas);
 };
 
 }
