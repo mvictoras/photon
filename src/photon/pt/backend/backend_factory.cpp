@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
+#include <stdexcept>
 
 namespace photon::pt {
 
@@ -43,8 +44,13 @@ std::unique_ptr<RayBackend> create_best_backend()
   {
     int device_count = 0;
     if (cudaGetDeviceCount(&device_count) == cudaSuccess && device_count > 0) {
-      std::fprintf(stderr, "[photon] Using OptiX backend (NVIDIA GPU detected)\n");
-      return std::make_unique<OptixBackend>();
+      try {
+        auto backend = std::make_unique<OptixBackend>();
+        std::fprintf(stderr, "[photon] Using OptiX backend (NVIDIA GPU detected)\n");
+        return backend;
+      } catch (const std::exception &e) {
+        std::fprintf(stderr, "[photon] OptiX init failed (%s), falling back\n", e.what());
+      }
     }
   }
 #endif
