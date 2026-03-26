@@ -1,3 +1,8 @@
+if(OPENCODE_ENABLE_CUDA AND Kokkos_ENABLE_CUDA)
+  message(STATUS "Skipping tests/ targets (not compatible with Kokkos CUDA CXX propagation)")
+  return()
+endif()
+
 add_executable(photon_version_test version_test.cpp)
 add_executable(photon_pt_smoke_test pt_smoke_test.cpp)
 add_executable(photon_math_test math_test.cpp)
