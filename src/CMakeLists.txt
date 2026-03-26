@@ -17,36 +17,69 @@ target_include_directories(anari_library_photon PUBLIC
 
 target_compile_features(anari_library_photon PUBLIC cxx_std_20)
 
-# If Kokkos CUDA is enabled, use nvcc_wrapper for this target only
-# (leaves ANARI SDK compiled with the host C++ compiler)
-if(Kokkos_ENABLE_CUDA)
-  kokkos_compilation(TARGET anari_library_photon)
+# --------------------------------------------------------------------------
+# Photon source files — split into CUDA-compiled and CXX-only groups.
+#
+# When Kokkos CUDA is enabled (COMPILE_AS_CMAKE_LANGUAGE mode), photon's
+# pathtracer core files are compiled as CUDA via nvcc + MSVC host compiler.
+# ANARI/helium files MUST remain CXX because CUDA's float4 conflicts with
+# linalg::float4 used by the ANARI SDK.
+# --------------------------------------------------------------------------
+
+# All photon source files compiled as CUDA when the CUDA backend is enabled.
+# nvcc uses MSVC as host compiler (-ccbin cl.exe) so C++ code compiles fine.
+set(PHOTON_CUDA_SOURCES
+  photon/pt/pathtracer.cpp
+  photon/pt/bvh/bvh.cpp
+  photon/pt/scene.cpp
+  photon/pt/scene/builder.cpp
+  photon/pt/environment_map.cpp
+  photon/pt/denoiser.cpp
+  photon/pt/backend/kokkos_backend.cpp
+  photon/pt/backend/embree_backend.cpp
+  photon/pt/backend/optix_backend.cpp
+  photon/pt/backend/hiprt_backend.cpp
+  photon/pt/backend/backend_factory.cpp
+  photon/anari/PhotonDevice.cpp
+  photon/anari/SceneFromAnari.cpp
+  photon/anari/device.cpp
+  photon/anari/library.cpp
+  photon/anari/entrypoint.cpp
+  photon/pathtracer/version.cpp
+  photon/pbrt/pbrt_parser.cpp
+  photon/pbrt/pbrt_to_photon.cpp
+  photon/pbrt/ply_reader.cpp
+  photon/pbrt/image_loader.cpp
+)
+
+# DeviceImpl.cpp is ANARI SDK source — keep as CXX to avoid any
+# potential conflicts with CUDA headers in upstream ANARI code.
+set(PHOTON_CXX_SOURCES
+  ${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/DeviceImpl.cpp
+)
+
+if(OPENCODE_ENABLE_CUDA AND Kokkos_ENABLE_CUDA)
+  # Compile all photon sources as CUDA (nvcc with MSVC host compiler)
+  set_source_files_properties(${PHOTON_CUDA_SOURCES}
+    PROPERTIES LANGUAGE CUDA
+  )
+  # Extended lambda support required for KOKKOS_LAMBDA in device code
+  set_source_files_properties(${PHOTON_CUDA_SOURCES}
+    PROPERTIES COMPILE_OPTIONS "--expt-extended-lambda;--expt-relaxed-constexpr"
+  )
+  # DeviceImpl.cpp stays CXX — undefine KOKKOS_ENABLE_CUDA so Kokkos
+  # headers don't pull in CUDA backend code that requires nvcc.
+  set_source_files_properties(${PHOTON_CXX_SOURCES}
+    PROPERTIES
+      LANGUAGE CXX
+      COMPILE_OPTIONS "/UKOKKOS_ENABLE_CUDA"
+  )
 endif()
 
 target_sources(anari_library_photon
   PRIVATE
-    photon/pathtracer/version.cpp
-    photon/anari/device.cpp
-    photon/anari/library.cpp
-    photon/anari/entrypoint.cpp
-    photon/anari/PhotonDevice.cpp
-    photon/anari/SceneFromAnari.cpp
-    ${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/DeviceImpl.cpp
-    photon/pt/pathtracer.cpp
-    photon/pt/bvh/bvh.cpp
-    photon/pt/scene.cpp
-    photon/pt/scene/builder.cpp
-    photon/pt/environment_map.cpp
-    photon/pt/denoiser.cpp
-    photon/pt/backend/kokkos_backend.cpp
-    photon/pt/backend/embree_backend.cpp
-    photon/pt/backend/optix_backend.cpp
-    photon/pt/backend/hiprt_backend.cpp
-    photon/pt/backend/backend_factory.cpp
-    photon/pbrt/pbrt_parser.cpp
-    photon/pbrt/pbrt_to_photon.cpp
-    photon/pbrt/ply_reader.cpp
-    photon/pbrt/image_loader.cpp
+    ${PHOTON_CUDA_SOURCES}
+    ${PHOTON_CXX_SOURCES}
   PUBLIC
     ${PROJECT_SOURCE_DIR}/include/photon/pathtracer/version.h
     ${PROJECT_SOURCE_DIR}/include/photon/anari/device.h
@@ -102,7 +135,9 @@ endif()
 
 if(PHOTON_OPTIX_READY)
   target_include_directories(anari_library_photon PUBLIC ${PHOTON_OPTIX_INCLUDE_DIR})
-  target_link_libraries(anari_library_photon PUBLIC CUDA::cudart CUDA::cuda_driver)
+  # Only link cuda_driver — Kokkos already links cudart (static).
+  # Linking both CUDA::cudart (dynamic) and cudart_static causes LNK2005.
+  target_link_libraries(anari_library_photon PUBLIC CUDA::cuda_driver)
   target_compile_definitions(anari_library_photon PUBLIC PHOTON_HAS_OPTIX)
 
   set(OPTIX_PTX_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/photon/pt/backend/optix/photon_optix.cu")
@@ -142,6 +177,10 @@ with open(sys.argv[2], 'w') as f:
   )
 
   target_sources(anari_library_photon PRIVATE ${OPTIX_PTX_EMBED})
+  # Embedded PTX is pure C++ (string literal), must not be compiled as CUDA
+  if(OPENCODE_ENABLE_CUDA AND Kokkos_ENABLE_CUDA)
+    set_source_files_properties(${OPTIX_PTX_EMBED} PROPERTIES LANGUAGE CXX)
+  endif()
 endif()
 
 if(PHOTON_HIPRT_READY)

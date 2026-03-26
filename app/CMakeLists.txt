@@ -1,3 +1,11 @@
+# When Kokkos CUDA is enabled, app targets compiled as plain CXX cannot
+# include Kokkos headers (they require nvcc). These apps are optional
+# standalone tools — tsdViewer is built separately from VisRTX.
+if(OPENCODE_ENABLE_CUDA AND Kokkos_ENABLE_CUDA)
+  message(STATUS "Skipping app/ targets (not compatible with Kokkos CUDA CXX propagation)")
+  return()
+endif()
+
 add_executable(photon_app main.cpp)
 
 target_link_libraries(photon_app PRIVATE anari_library_photon)

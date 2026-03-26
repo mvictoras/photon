@@ -6,29 +6,56 @@ set(FETCHCONTENT_QUIET OFF)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
-option(OPENCODE_ENABLE_CUDA "Enable Kokkos CUDA backend" ON)
 option(OPENCODE_ENABLE_HIP "Enable Kokkos HIP backend" OFF)
 option(OPENCODE_ENABLE_SYCL "Enable Kokkos SYCL backend" OFF)
 
 # --------------------------------------------------------------------------
-# Kokkos: prefer a pre-installed build (required for CUDA to avoid
-# nvcc_wrapper compiling the ANARI SDK which conflicts with CUDA's float4).
-# Fall back to FetchContent if no installed Kokkos is found.
+# Kokkos
+# --------------------------------------------------------------------------
+# CUDA support: uses COMPILE_AS_CMAKE_LANGUAGE mode so CMake's native CUDA
+# language compiles .cpp files via nvcc with MSVC as host compiler.
+# No nvcc_wrapper needed. ANARI SDK files are excluded from CUDA compilation
+# in src/CMakeLists.txt via selective set_source_files_properties().
 # --------------------------------------------------------------------------
 find_package(Kokkos 5.0 QUIET)
 if(Kokkos_FOUND)
   message(STATUS "Using pre-installed Kokkos: ${Kokkos_DIR}")
 else()
-  message(STATUS "Pre-installed Kokkos not found — fetching via FetchContent (CUDA disabled)")
-  # FetchContent Kokkos cannot use CUDA without nvcc_wrapper as global compiler
+  message(STATUS "Pre-installed Kokkos not found — fetching via FetchContent")
+
   set(Kokkos_ENABLE_SERIAL ON CACHE BOOL "" FORCE)
-  if(MSVC)
-    set(Kokkos_ENABLE_OPENMP OFF CACHE BOOL "" FORCE)
-  else()
-    set(Kokkos_ENABLE_OPENMP ON CACHE BOOL "" FORCE)
-  endif()
   set(Kokkos_ENABLE_POSITION_INDEPENDENT_CODE ON CACHE BOOL "" FORCE)
   set(Kokkos_ENABLE_MDSPAN OFF CACHE BOOL "" FORCE)
+
+  if(OPENCODE_ENABLE_CUDA)
+    message(STATUS "Enabling Kokkos CUDA backend (COMPILE_AS_CMAKE_LANGUAGE mode)")
+    set(Kokkos_ENABLE_CUDA ON CACHE BOOL "" FORCE)
+    # Use CMake's native CUDA language support instead of nvcc_wrapper.
+    # This allows MSVC as the host compiler on Windows.
+    set(Kokkos_ENABLE_COMPILE_AS_CMAKE_LANGUAGE ON CACHE BOOL "" FORCE)
+    # GPU architecture — set via CMAKE_CUDA_ARCHITECTURES or override here
+    if(DEFINED CMAKE_CUDA_ARCHITECTURES)
+      # Map CMake arch to Kokkos arch name (Ada Lovelace = sm_89)
+      if("89" IN_LIST CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "89")
+        set(Kokkos_ARCH_ADA89 ON CACHE BOOL "" FORCE)
+      elseif("90" IN_LIST CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "90")
+        set(Kokkos_ARCH_HOPPER90 ON CACHE BOOL "" FORCE)
+      elseif("86" IN_LIST CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "86")
+        set(Kokkos_ARCH_AMPERE86 ON CACHE BOOL "" FORCE)
+      elseif("80" IN_LIST CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "80")
+        set(Kokkos_ARCH_AMPERE80 ON CACHE BOOL "" FORCE)
+      endif()
+    endif()
+    # OpenMP is not compatible with CUDA compilation on MSVC
+    set(Kokkos_ENABLE_OPENMP OFF CACHE BOOL "" FORCE)
+  else()
+    set(Kokkos_ENABLE_CUDA OFF CACHE BOOL "" FORCE)
+    if(MSVC)
+      set(Kokkos_ENABLE_OPENMP OFF CACHE BOOL "" FORCE)
+    else()
+      set(Kokkos_ENABLE_OPENMP ON CACHE BOOL "" FORCE)
+    endif()
+  endif()
 
   FetchContent_Declare(
     kokkos
@@ -45,11 +72,25 @@ set(BUILD_CTS OFF CACHE BOOL "" FORCE)
 set(BUILD_CAT OFF CACHE BOOL "" FORCE)
 set(BUILD_HELIUM_TESTS OFF CACHE BOOL "" FORCE)
 
+# Patch script: replace CMAKE_SOURCE_DIR with PROJECT_SOURCE_DIR in ANARI's
+# CMakeLists.txt files so it works as a FetchContent sub-project.
+# Uses CMake -P for cross-platform compatibility (no Unix find/sed needed).
+file(WRITE "${CMAKE_BINARY_DIR}/_anari_patch.cmake" [=[
+file(GLOB_RECURSE _cmake_files "CMakeLists.txt")
+foreach(_f IN LISTS _cmake_files)
+  file(READ "${_f}" _content)
+  string(REPLACE "CMAKE_SOURCE_DIR" "PROJECT_SOURCE_DIR" _patched "${_content}")
+  if(NOT _content STREQUAL _patched)
+    file(WRITE "${_f}" "${_patched}")
+  endif()
+endforeach()
+]=])
+
 FetchContent_Declare(
   anari
   GIT_REPOSITORY https://github.com/KhronosGroup/ANARI-SDK.git
   GIT_TAG v0.15.0
-  PATCH_COMMAND find . -name CMakeLists.txt -exec sed -i.bak "s/CMAKE_SOURCE_DIR/PROJECT_SOURCE_DIR/g" {} +
+  PATCH_COMMAND ${CMAKE_COMMAND} -P "${CMAKE_BINARY_DIR}/_anari_patch.cmake"
 )
 
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -90,7 +131,8 @@ set(PHOTON_OPTIX_READY FALSE CACHE INTERNAL "")
 if(PHOTON_ENABLE_OPTIX)
   find_package(CUDAToolkit REQUIRED)
   find_path(OptiX_INCLUDE_DIR optix.h
-    PATHS $ENV{OptiX_INSTALL_DIR}/include
+    PATHS ${OptiX_INSTALL_DIR}/include
+          $ENV{OptiX_INSTALL_DIR}/include
           $ENV{HOME}/src/optix-headers/include
           /usr/local/include
     DOC "OptiX include directory")
