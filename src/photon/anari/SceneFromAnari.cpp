@@ -7,6 +7,7 @@
 
 #include "photon/anari/PhotonDevice.h"
 
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -170,22 +171,40 @@ bool try_parse_sampler_color(const PhotonDevice &dev, const PhotonDevice::Object
   const size_t npixels = size_t(out.texture.width) * size_t(out.texture.height);
   out.texture.pixels.resize(npixels);
 
-  if (img_obj->array_element_type == ANARI_FLOAT32_VEC3) {
+  // Helper: sRGB byte → linear float
+  auto srgb_to_linear = [](uint8_t v) -> float {
+    const float s = v / 255.f;
+    return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+  };
+
+  const auto etype = img_obj->array_element_type;
+
+  if (etype == ANARI_FLOAT32_VEC3) {
     const float *src = reinterpret_cast<const float *>(img_obj->memory);
     for (size_t i = 0; i < npixels; ++i)
       out.texture.pixels[i] = v3_from_floats(src + 3 * i);
-  } else if (img_obj->array_element_type == ANARI_FLOAT32_VEC4) {
+  } else if (etype == ANARI_FLOAT32_VEC4) {
     const float *src = reinterpret_cast<const float *>(img_obj->memory);
     for (size_t i = 0; i < npixels; ++i)
       out.texture.pixels[i] = v3_from_vec4(src + 4 * i);
-  } else if (img_obj->array_element_type == ANARI_UINT8_VEC3) {
+  } else if (etype == ANARI_UINT8_VEC3 || etype == ANARI_UFIXED8_VEC3) {
     const uint8_t *src = reinterpret_cast<const uint8_t *>(img_obj->memory);
     for (size_t i = 0; i < npixels; ++i)
       out.texture.pixels[i] = {src[3*i]/255.f, src[3*i+1]/255.f, src[3*i+2]/255.f};
-  } else if (img_obj->array_element_type == ANARI_UINT8_VEC4) {
+  } else if (etype == ANARI_UINT8_VEC4 || etype == ANARI_UFIXED8_VEC4) {
     const uint8_t *src = reinterpret_cast<const uint8_t *>(img_obj->memory);
     for (size_t i = 0; i < npixels; ++i)
       out.texture.pixels[i] = {src[4*i]/255.f, src[4*i+1]/255.f, src[4*i+2]/255.f};
+  } else if (etype == ANARI_UFIXED8_RGB_SRGB) {
+    // sRGB 3-component: convert to linear
+    const uint8_t *src = reinterpret_cast<const uint8_t *>(img_obj->memory);
+    for (size_t i = 0; i < npixels; ++i)
+      out.texture.pixels[i] = {srgb_to_linear(src[3*i]), srgb_to_linear(src[3*i+1]), srgb_to_linear(src[3*i+2])};
+  } else if (etype == ANARI_UFIXED8_RGBA_SRGB) {
+    // sRGB 4-component: convert RGB to linear, ignore alpha
+    const uint8_t *src = reinterpret_cast<const uint8_t *>(img_obj->memory);
+    for (size_t i = 0; i < npixels; ++i)
+      out.texture.pixels[i] = {srgb_to_linear(src[4*i]), srgb_to_linear(src[4*i+1]), srgb_to_linear(src[4*i+2])};
   } else {
     return false;
   }
@@ -606,18 +625,13 @@ photon::pt::Mat4 mat4_from_column_major(const float *cm)
 
 void merge_surfaces_to_mesh(const std::vector<SurfaceGeometry> &surfaces,
     photon::pt::TriangleMesh &mesh,
-    std::vector<photon::pt::Material> &matsCpu)
+    std::vector<photon::pt::Material> &matsCpu,
+    photon::pt::TextureAtlas &atlas)
 {
+  // --- Count totals (no texture subdivision — 1 tri = 1 tri) ---
   uint64_t total_tris = 0;
-  for (const auto &sg : surfaces) {
-    const bool tex = sg.material.use_texture && !sg.vertex_uvs.empty();
-    if (tex) {
-      const uint32_t sub = std::min(sg.material.texture.width > 0 ? sg.material.texture.width : 1u, 16u);
-      total_tris += sg.triangles.size() * sub * sub * 2;
-    } else {
-      total_tris += sg.triangles.size();
-    }
-  }
+  for (const auto &sg : surfaces)
+    total_tris += sg.triangles.size();
 
   if (total_tris == 0)
     return;
@@ -625,195 +639,152 @@ void merge_surfaces_to_mesh(const std::vector<SurfaceGeometry> &surfaces,
   const uint64_t total_verts = total_tris * 3;
 
   bool any_vcol = false;
+  bool any_uv = false;
   for (const auto &sg : surfaces) {
-    if (sg.material.use_vertex_color && !sg.vertex_colors.empty()) {
+    if (sg.material.use_vertex_color && !sg.vertex_colors.empty())
       any_vcol = true;
-      break;
-    }
+    if (!sg.vertex_uvs.empty())
+      any_uv = true;
   }
 
   mesh.positions = Kokkos::View<photon::pt::Vec3 *>("pos", total_verts);
   mesh.indices = Kokkos::View<photon::pt::u32 *>("idx", total_verts);
   mesh.material_ids = Kokkos::View<photon::pt::u32 *>("mat_id", total_tris);
   mesh.albedo_per_prim = Kokkos::View<photon::pt::Vec3 *>("alb", total_tris);
-  if (any_vcol) {
+  if (any_vcol)
     mesh.vertex_colors = Kokkos::View<photon::pt::Vec3 *>("vcol", total_verts);
-  }
+  if (any_uv)
+    mesh.texcoords = Kokkos::View<photon::pt::Vec2 *>("uv", total_verts);
 
   auto pos_h = Kokkos::create_mirror_view(mesh.positions);
   auto idx_h = Kokkos::create_mirror_view(mesh.indices);
   auto mat_id_h = Kokkos::create_mirror_view(mesh.material_ids);
   auto alb_h = Kokkos::create_mirror_view(mesh.albedo_per_prim);
+
   decltype(Kokkos::create_mirror_view(mesh.vertex_colors)) vcol_h;
-  if (any_vcol) {
+  if (any_vcol)
     vcol_h = Kokkos::create_mirror_view(mesh.vertex_colors);
+
+  decltype(Kokkos::create_mirror_view(mesh.texcoords)) uv_h;
+  if (any_uv)
+    uv_h = Kokkos::create_mirror_view(mesh.texcoords);
+
+  // --- Build texture atlas from all unique textures ---
+  // Collect unique textures referenced by surfaces and assign atlas indices
+  struct AtlasEntry {
+    const TextureImage *tex;
+    int32_t atlas_id;
+  };
+  std::vector<AtlasEntry> atlas_entries;
+  // Map from texture pointer to atlas index (dedup identical texture objects)
+  std::map<const TextureImage *, int32_t> tex_to_atlas;
+
+  for (const auto &sg : surfaces) {
+    if (sg.material.use_texture && sg.material.texture.width > 0 && sg.material.texture.height > 0) {
+      const TextureImage *tp = &sg.material.texture;
+      if (tex_to_atlas.find(tp) == tex_to_atlas.end()) {
+        int32_t id = int32_t(atlas_entries.size());
+        tex_to_atlas[tp] = id;
+        atlas_entries.push_back({tp, id});
+      }
+    }
   }
 
+  // Build the TextureAtlas
+  if (!atlas_entries.empty()) {
+    uint32_t total_pixels = 0;
+    for (const auto &e : atlas_entries)
+      total_pixels += e.tex->width * e.tex->height;
+
+    atlas.count = uint32_t(atlas_entries.size());
+    atlas.pixels = Kokkos::View<photon::pt::Vec3 *>("atlas_pixels", total_pixels);
+    atlas.infos = Kokkos::View<photon::pt::TextureInfo *>("atlas_infos", atlas.count);
+
+    auto pixels_h = Kokkos::create_mirror_view(atlas.pixels);
+    auto infos_h = Kokkos::create_mirror_view(atlas.infos);
+
+    uint32_t pixel_offset = 0;
+    for (const auto &e : atlas_entries) {
+      photon::pt::TextureInfo ti;
+      ti.offset = pixel_offset;
+      ti.width = e.tex->width;
+      ti.height = e.tex->height;
+      infos_h(e.atlas_id) = ti;
+
+      const uint32_t npx = e.tex->width * e.tex->height;
+      for (uint32_t p = 0; p < npx; ++p)
+        pixels_h(pixel_offset + p) = e.tex->pixels[p];
+      pixel_offset += npx;
+    }
+
+    Kokkos::deep_copy(atlas.pixels, pixels_h);
+    Kokkos::deep_copy(atlas.infos, infos_h);
+  }
+
+  // --- Emit triangles ---
   uint64_t vert_off = 0;
   uint64_t tri_off = 0;
 
   for (const auto &sg : surfaces) {
     const bool use_vcol = sg.material.use_vertex_color && !sg.vertex_colors.empty();
-    const bool use_tex = sg.material.use_texture && !sg.vertex_uvs.empty();
+    const bool use_tex = sg.material.use_texture && !sg.vertex_uvs.empty()
+        && sg.material.texture.width > 0 && sg.material.texture.height > 0;
 
+    const uint32_t matId = uint32_t(matsCpu.size());
+    photon::pt::Material mat = sg.material.mat;
+
+    // If this surface has a texture, set the base_color_tex index
     if (use_tex) {
-      const uint32_t tex_w = sg.material.texture.width > 0 ? sg.material.texture.width : 1;
-      const uint32_t tex_h = sg.material.texture.height > 0 ? sg.material.texture.height : 1;
+      auto it = tex_to_atlas.find(&sg.material.texture);
+      if (it != tex_to_atlas.end())
+        mat.base_color_tex = it->second;
+    }
 
-      for (const auto &t : sg.triangles) {
-        const auto &pa = sg.positions[t.a];
-        const auto &pb = sg.positions[t.b];
-        const auto &pc = sg.positions[t.c];
-        const Vec2 uva = (t.a < sg.vertex_uvs.size()) ? sg.vertex_uvs[t.a] : Vec2{0.f, 0.f};
-        const Vec2 uvb = (t.b < sg.vertex_uvs.size()) ? sg.vertex_uvs[t.b] : Vec2{0.f, 0.f};
-        const Vec2 uvc = (t.c < sg.vertex_uvs.size()) ? sg.vertex_uvs[t.c] : Vec2{0.f, 0.f};
+    matsCpu.push_back(mat);
 
-        float uv_min_u = std::fmin(uva.u, std::fmin(uvb.u, uvc.u));
-        float uv_max_u = std::fmax(uva.u, std::fmax(uvb.u, uvc.u));
-        float uv_min_v = std::fmin(uva.v, std::fmin(uvb.v, uvc.v));
-        float uv_max_v = std::fmax(uva.v, std::fmax(uvb.v, uvc.v));
+    for (const auto &t : sg.triangles) {
+      pos_h(vert_off + 0) = sg.positions[t.a];
+      pos_h(vert_off + 1) = sg.positions[t.b];
+      pos_h(vert_off + 2) = sg.positions[t.c];
 
-        int cell_u0 = int(std::floor(uv_min_u * float(tex_w)));
-        int cell_u1 = int(std::ceil(uv_max_u * float(tex_w)));
-        int cell_v0 = int(std::floor(uv_min_v * float(tex_h)));
-        int cell_v1 = int(std::ceil(uv_max_v * float(tex_h)));
+      idx_h(vert_off + 0) = photon::pt::u32(vert_off + 0);
+      idx_h(vert_off + 1) = photon::pt::u32(vert_off + 1);
+      idx_h(vert_off + 2) = photon::pt::u32(vert_off + 2);
 
-        auto pos_from_uv = [&](float u_val, float v_val) {
-          float du_ab = uvb.u - uva.u, dv_ab = uvb.v - uva.v;
-          float du_ac = uvc.u - uva.u, dv_ac = uvc.v - uva.v;
-          float det = du_ab * dv_ac - du_ac * dv_ab;
-          if (std::fabs(det) < 1e-10f)
-            return pa;
-          float du = u_val - uva.u, dv = v_val - uva.v;
-          float s = (du * dv_ac - du_ac * dv) / det;
-          float t_val = (du_ab * dv - du * dv_ab) / det;
-          return pa * (1.f - s - t_val) + pb * s + pc * t_val;
-        };
-
-        auto point_in_tri_uv = [&](float u_val, float v_val) -> bool {
-          float du_ab = uvb.u - uva.u, dv_ab = uvb.v - uva.v;
-          float du_ac = uvc.u - uva.u, dv_ac = uvc.v - uva.v;
-          float det = du_ab * dv_ac - du_ac * dv_ab;
-          if (std::fabs(det) < 1e-10f) return false;
-          float du = u_val - uva.u, dv = v_val - uva.v;
-          float s = (du * dv_ac - du_ac * dv) / det;
-          float t_val = (du_ab * dv - du * dv_ab) / det;
-          return s >= -1e-5f && t_val >= -1e-5f && (s + t_val) <= 1.f + 1e-5f;
-        };
-
-        for (int cu = cell_u0; cu < cell_u1; ++cu) {
-          for (int cv = cell_v0; cv < cell_v1; ++cv) {
-            float u0 = float(cu) / float(tex_w);
-            float u1 = float(cu + 1) / float(tex_w);
-            float v0 = float(cv) / float(tex_h);
-            float v1 = float(cv + 1) / float(tex_h);
-            float mid_u = (u0 + u1) * 0.5f;
-            float mid_v = (v0 + v1) * 0.5f;
-
-            if (!point_in_tri_uv(mid_u, mid_v))
-              continue;
-
-            photon::pt::Vec3 alb = sg.material.texture.sample(mid_u, mid_v);
-            alb.x = std::fmax(0.f, std::fmin(1.f, alb.x));
-            alb.y = std::fmax(0.f, std::fmin(1.f, alb.y));
-            alb.z = std::fmax(0.f, std::fmin(1.f, alb.z));
-
-            auto clamp_to_tri = [&](float u_val, float v_val) {
-              if (point_in_tri_uv(u_val, v_val))
-                return pos_from_uv(u_val, v_val);
-              return pos_from_uv(
-                  std::fmax(uv_min_u, std::fmin(uv_max_u, u_val)),
-                  std::fmax(uv_min_v, std::fmin(uv_max_v, v_val)));
-            };
-
-            auto q0 = clamp_to_tri(u0, v0);
-            auto q1 = clamp_to_tri(u1, v0);
-            auto q2 = clamp_to_tri(u0, v1);
-            auto q3 = clamp_to_tri(u1, v1);
-
-            const uint32_t matId = uint32_t(matsCpu.size());
-            photon::pt::Material triMat = sg.material.mat;
-            triMat.base_color = alb;
-            matsCpu.push_back(triMat);
-
-            pos_h(vert_off + 0) = q0;
-            pos_h(vert_off + 1) = q1;
-            pos_h(vert_off + 2) = q2;
-            idx_h(vert_off + 0) = photon::pt::u32(vert_off + 0);
-            idx_h(vert_off + 1) = photon::pt::u32(vert_off + 1);
-            idx_h(vert_off + 2) = photon::pt::u32(vert_off + 2);
-            mat_id_h(tri_off) = matId;
-            alb_h(tri_off) = alb;
-            vert_off += 3;
-            tri_off += 1;
-
-            matsCpu.push_back(triMat);
-            pos_h(vert_off + 0) = q1;
-            pos_h(vert_off + 1) = q3;
-            pos_h(vert_off + 2) = q2;
-            idx_h(vert_off + 0) = photon::pt::u32(vert_off + 0);
-            idx_h(vert_off + 1) = photon::pt::u32(vert_off + 1);
-            idx_h(vert_off + 2) = photon::pt::u32(vert_off + 2);
-            mat_id_h(tri_off) = uint32_t(matsCpu.size() - 1);
-            alb_h(tri_off) = alb;
-            vert_off += 3;
-            tri_off += 1;
-          }
-        }
+      if (any_uv && !sg.vertex_uvs.empty()) {
+        const auto &uva = (t.a < sg.vertex_uvs.size()) ? sg.vertex_uvs[t.a] : Vec2{0.f, 0.f};
+        const auto &uvb = (t.b < sg.vertex_uvs.size()) ? sg.vertex_uvs[t.b] : Vec2{0.f, 0.f};
+        const auto &uvc = (t.c < sg.vertex_uvs.size()) ? sg.vertex_uvs[t.c] : Vec2{0.f, 0.f};
+        uv_h(vert_off + 0) = photon::pt::Vec2{uva.u, uva.v};
+        uv_h(vert_off + 1) = photon::pt::Vec2{uvb.u, uvb.v};
+        uv_h(vert_off + 2) = photon::pt::Vec2{uvc.u, uvc.v};
+      } else if (any_uv) {
+        uv_h(vert_off + 0) = photon::pt::Vec2{0.f, 0.f};
+        uv_h(vert_off + 1) = photon::pt::Vec2{0.f, 0.f};
+        uv_h(vert_off + 2) = photon::pt::Vec2{0.f, 0.f};
       }
-    } else if (use_vcol) {
-      const uint32_t matId = uint32_t(matsCpu.size());
-      matsCpu.push_back(sg.material.mat);
 
-      for (const auto &t : sg.triangles) {
-        pos_h(vert_off + 0) = sg.positions[t.a];
-        pos_h(vert_off + 1) = sg.positions[t.b];
-        pos_h(vert_off + 2) = sg.positions[t.c];
-
-        idx_h(vert_off + 0) = photon::pt::u32(vert_off + 0);
-        idx_h(vert_off + 1) = photon::pt::u32(vert_off + 1);
-        idx_h(vert_off + 2) = photon::pt::u32(vert_off + 2);
-
-        const auto &c0 = (t.a < sg.vertex_colors.size()) ? sg.vertex_colors[t.a] : sg.material.mat.base_color;
-        const auto &c1 = (t.b < sg.vertex_colors.size()) ? sg.vertex_colors[t.b] : sg.material.mat.base_color;
-        const auto &c2 = (t.c < sg.vertex_colors.size()) ? sg.vertex_colors[t.c] : sg.material.mat.base_color;
-
+      if (use_vcol) {
         auto clamp01 = [](photon::pt::Vec3 v) {
           v.x = std::fmax(0.f, std::fmin(1.f, v.x));
           v.y = std::fmax(0.f, std::fmin(1.f, v.y));
           v.z = std::fmax(0.f, std::fmin(1.f, v.z));
           return v;
         };
-
+        const auto &c0 = (t.a < sg.vertex_colors.size()) ? sg.vertex_colors[t.a] : sg.material.mat.base_color;
+        const auto &c1 = (t.b < sg.vertex_colors.size()) ? sg.vertex_colors[t.b] : sg.material.mat.base_color;
+        const auto &c2 = (t.c < sg.vertex_colors.size()) ? sg.vertex_colors[t.c] : sg.material.mat.base_color;
         vcol_h(vert_off + 0) = clamp01(c0);
         vcol_h(vert_off + 1) = clamp01(c1);
         vcol_h(vert_off + 2) = clamp01(c2);
-
-        mat_id_h(tri_off) = matId;
         alb_h(tri_off) = (c0 + c1 + c2) * (1.f / 3.f);
-
-        vert_off += 3;
-        tri_off += 1;
-      }
-    } else {
-      const uint32_t matId = uint32_t(matsCpu.size());
-      matsCpu.push_back(sg.material.mat);
-
-      for (const auto &t : sg.triangles) {
-        pos_h(vert_off + 0) = sg.positions[t.a];
-        pos_h(vert_off + 1) = sg.positions[t.b];
-        pos_h(vert_off + 2) = sg.positions[t.c];
-
-        idx_h(vert_off + 0) = photon::pt::u32(vert_off + 0);
-        idx_h(vert_off + 1) = photon::pt::u32(vert_off + 1);
-        idx_h(vert_off + 2) = photon::pt::u32(vert_off + 2);
-
-        mat_id_h(tri_off) = matId;
+      } else {
         alb_h(tri_off) = sg.material.mat.base_color;
-
-        vert_off += 3;
-        tri_off += 1;
       }
+
+      mat_id_h(tri_off) = matId;
+      vert_off += 3;
+      tri_off += 1;
     }
   }
 
@@ -821,9 +792,10 @@ void merge_surfaces_to_mesh(const std::vector<SurfaceGeometry> &surfaces,
   Kokkos::deep_copy(mesh.indices, idx_h);
   Kokkos::deep_copy(mesh.material_ids, mat_id_h);
   Kokkos::deep_copy(mesh.albedo_per_prim, alb_h);
-  if (any_vcol) {
+  if (any_vcol)
     Kokkos::deep_copy(mesh.vertex_colors, vcol_h);
-  }
+  if (any_uv)
+    Kokkos::deep_copy(mesh.texcoords, uv_h);
 }
 
 } // anonymous namespace
@@ -904,13 +876,15 @@ std::optional<photon::pt::Scene> build_scene_from_anari(ANARIWorld world, const 
     return std::nullopt;
   std::vector<photon::pt::Material> matsCpu;
   photon::pt::TriangleMesh mesh;
-  merge_surfaces_to_mesh(all_surfaces, mesh, matsCpu);
+  photon::pt::TextureAtlas atlas;
+  merge_surfaces_to_mesh(all_surfaces, mesh, matsCpu, atlas);
 
   if (mesh.triangle_count() == 0)
     return std::nullopt;
 
   photon::pt::Scene s;
   s.mesh = mesh;
+  s.textures = atlas;
   s.bvh = photon::pt::Bvh::build_cpu(mesh);
 
   s.material_count = uint32_t(matsCpu.size());
