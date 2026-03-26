@@ -17,6 +17,7 @@ struct RenderParams {
   u32 height{512};
   u32 samples_per_pixel{8};
   u32 max_depth{5};
+  u32 sample_offset{0}; // offset added to RNG seed for accumulation across frames
 };
 
 struct RenderResult {
@@ -32,6 +33,7 @@ struct PathTracer {
 
   void set_scene(const Scene &scene);
   void set_backend(std::unique_ptr<RayBackend> backend);
+  void set_backend_ref(RayBackend &backend);
 
   RenderResult render() const;
 
@@ -39,7 +41,8 @@ struct PathTracer {
 
 private:
   Scene m_scene;
-  std::unique_ptr<RayBackend> m_backend;
+  std::unique_ptr<RayBackend> m_backend_owned;
+  RayBackend *m_backend{nullptr};
 };
 
 } // namespace photon::pt

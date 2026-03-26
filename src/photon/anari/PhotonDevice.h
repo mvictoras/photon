@@ -13,11 +13,9 @@
 #include <unordered_map>
 #include <vector>
 
-
-namespace photon::pt {
-struct Camera;
-struct Scene;
-}
+#include "photon/pt/camera.h"
+#include "photon/pt/scene.h"
+#include "photon/pt/backend/ray_backend.h"
 
 namespace photon::anari_device {
 
@@ -107,17 +105,32 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
 
 
 
-  uint64_t m_next_id{1};
-  std::map<uintptr_t, std::unique_ptr<Object>> m_objects;
-   std::vector<float> m_framebuffer;
-   std::vector<char> m_fb_bytes;
-   uint32_t m_fb_w{0}, m_fb_h{0};
+   uint64_t m_next_id{1};
+   std::map<uintptr_t, std::unique_ptr<Object>> m_objects;
+    std::vector<float> m_framebuffer;
+    std::vector<char> m_fb_bytes;
+    uint32_t m_fb_w{0}, m_fb_h{0};
 
-   std::vector<float> m_channel_color;
-   std::vector<float> m_channel_depth;
-   std::vector<float> m_channel_normal;
-   std::vector<float> m_channel_albedo;
+    std::vector<float> m_channel_color;
+    std::vector<float> m_channel_depth;
+    std::vector<float> m_channel_normal;
+    std::vector<float> m_channel_albedo;
 
+    // Cached rendering state — persist across frames
+    std::unique_ptr<photon::pt::RayBackend> m_backend;
+    std::optional<photon::pt::Scene> m_scene;
+    uint64_t m_scene_version{0};       // version when scene was last built
+    uint64_t m_world_commit_version{0}; // bumped on scene-affecting commits
+
+    // Accumulation state
+    int m_frameID{0};                    // accumulated sample count
+    std::vector<float> m_accumColor;     // running sum (RGBA per pixel)
+    std::vector<float> m_accumDepth;     // running sum (1 float per pixel)
+    std::vector<float> m_accumNormal;    // running sum (3 floats per pixel)
+    std::vector<float> m_accumAlbedo;    // running sum (3 floats per pixel)
+    float m_lastDuration{0.f};           // seconds for last renderFrame
+    uint32_t m_accum_fb_w{0}, m_accum_fb_h{0}; // resolution when accum started
+    photon::pt::Camera m_prev_camera{};  // camera from previous frame
 };
 
 }

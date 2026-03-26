@@ -1,5 +1,6 @@
 #include <anari/anari.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -27,21 +28,92 @@ void owned_memory_deleter(const void *, const void *mem)
 size_t sizeof_anari(ANARIDataType type)
 {
   switch (type) {
+  // 1-byte element types
+  case ANARI_UINT8:
+  case ANARI_INT8:
+  case ANARI_UFIXED8:
+  case ANARI_FIXED8:
+  case ANARI_UFIXED8_R_SRGB:
+    return 1;
+  case ANARI_UINT8_VEC2:
+  case ANARI_INT8_VEC2:
+  case ANARI_UFIXED8_VEC2:
+  case ANARI_FIXED8_VEC2:
+  case ANARI_UFIXED8_RA_SRGB:
+    return 2;
+  case ANARI_UINT8_VEC3:
+  case ANARI_INT8_VEC3:
+  case ANARI_UFIXED8_VEC3:
+  case ANARI_FIXED8_VEC3:
+  case ANARI_UFIXED8_RGB_SRGB:
+    return 3;
+  case ANARI_UINT8_VEC4:
+  case ANARI_INT8_VEC4:
+  case ANARI_UFIXED8_VEC4:
+  case ANARI_FIXED8_VEC4:
+  case ANARI_UFIXED8_RGBA_SRGB:
+    return 4;
+  // 2-byte element types
+  case ANARI_UINT16:
+  case ANARI_INT16:
+  case ANARI_UFIXED16:
+  case ANARI_FIXED16:
+    return 2;
+  case ANARI_UINT16_VEC2:
+  case ANARI_INT16_VEC2:
+  case ANARI_UFIXED16_VEC2:
+  case ANARI_FIXED16_VEC2:
+    return 4;
+  case ANARI_UINT16_VEC3:
+  case ANARI_INT16_VEC3:
+  case ANARI_UFIXED16_VEC3:
+  case ANARI_FIXED16_VEC3:
+    return 6;
+  case ANARI_UINT16_VEC4:
+  case ANARI_INT16_VEC4:
+  case ANARI_UFIXED16_VEC4:
+  case ANARI_FIXED16_VEC4:
+    return 8;
+  // 4-byte element types
   case ANARI_INT32:
   case ANARI_UINT32:
   case ANARI_FLOAT32:
     return 4;
   case ANARI_FLOAT32_VEC2:
   case ANARI_UINT32_VEC2:
+  case ANARI_INT32_VEC2:
     return 8;
   case ANARI_FLOAT32_VEC3:
   case ANARI_UINT32_VEC3:
+  case ANARI_INT32_VEC3:
     return 12;
   case ANARI_FLOAT32_VEC4:
   case ANARI_UINT32_VEC4:
+  case ANARI_INT32_VEC4:
     return 16;
+  // 8-byte element types
+  case ANARI_FLOAT64:
+  case ANARI_INT64:
+  case ANARI_UINT64:
+    return 8;
+  case ANARI_FLOAT64_VEC2:
+  case ANARI_INT64_VEC2:
+  case ANARI_UINT64_VEC2:
+    return 16;
+  case ANARI_FLOAT64_VEC3:
+  case ANARI_INT64_VEC3:
+  case ANARI_UINT64_VEC3:
+    return 24;
+  case ANARI_FLOAT64_VEC4:
+  case ANARI_INT64_VEC4:
+  case ANARI_UINT64_VEC4:
+    return 32;
+  // Matrix types
   case ANARI_FLOAT32_MAT4:
     return 64;
+  // Bool
+  case ANARI_BOOL:
+    return 4;
   default:
     break;
   }
@@ -303,6 +375,16 @@ int PhotonDevice::getProperty(ANARIObject object, const char *name, ANARIDataTyp
     return 1;
   }
 
+  if (name && std::strcmp(name, "numSamples") == 0 && type == ANARI_INT32 && size >= sizeof(int)) {
+    *(int *)mem = m_frameID;
+    return 1;
+  }
+
+  if (name && std::strcmp(name, "duration") == 0 && type == ANARI_FLOAT32 && size >= sizeof(float)) {
+    *(float *)mem = m_lastDuration;
+    return 1;
+  }
+
   if (name && std::strcmp(name, "bounds") == 0 && size >= 6 * sizeof(float)) {
     auto *wo = get(object);
     if (!wo || wo->object_type != ANARI_WORLD)
@@ -506,7 +588,32 @@ void PhotonDevice::unsetAllParameters(ANARIObject object)
   o->params.clear();
 }
 
-void PhotonDevice::commitParameters(ANARIObject) {}
+void PhotonDevice::commitParameters(ANARIObject object)
+{
+  auto *o = get(object);
+  if (!o)
+    return;
+
+  // Bump world version when scene-affecting objects are committed
+  switch (o->object_type) {
+  case ANARI_WORLD:
+  case ANARI_GEOMETRY:
+  case ANARI_SURFACE:
+  case ANARI_GROUP:
+  case ANARI_INSTANCE:
+  case ANARI_MATERIAL:
+  case ANARI_LIGHT:
+  case ANARI_SAMPLER:
+    ++m_world_commit_version;
+    break;
+  case ANARI_CAMERA:
+  case ANARI_RENDERER:
+  case ANARI_FRAME:
+    break;
+  default:
+    break;
+  }
+}
 
 void PhotonDevice::release(ANARIObject object)
 {
@@ -679,7 +786,7 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
   if (rit != o->params.end() && rit->second.size() == sizeof(uintptr_t))
     std::memcpy(&renderer_h, rit->second.data(), sizeof(uintptr_t));
 
-  uint32_t spp = 16;
+  uint32_t spp = 1;
   uint32_t max_depth = 5;
 
   if (renderer_h != 0) {
@@ -704,63 +811,157 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
     }
   }
 
-  auto scene_opt = build_scene_from_anari((ANARIWorld)world_h, *this);
-  photon::pt::Scene scene = scene_opt ? *scene_opt : photon::pt::SceneBuilder::make_two_quads();
+  // --- Rebuild scene and accel only when world has changed ---
+  const bool scene_dirty = (m_world_commit_version != m_scene_version);
 
+  if (scene_dirty || !m_scene) {
+    auto scene_opt = build_scene_from_anari((ANARIWorld)world_h, *this);
+    m_scene = scene_opt ? std::move(*scene_opt) : photon::pt::SceneBuilder::make_two_quads();
+
+    if (!m_backend)
+      m_backend = photon::pt::create_best_backend();
+
+    m_backend->build_accel(*m_scene);
+    m_scene_version = m_world_commit_version;
+  }
+
+  // --- Camera is always rebuilt (cheap) ---
   photon::pt::Camera cam = build_camera_from_anari(fb, *this);
 
-  auto backend = photon::pt::create_best_backend();
-  backend->build_accel(scene);
+  // --- Check if accumulation needs to be reset ---
+  // Compare camera fields explicitly (memcmp is unreliable due to struct padding)
+  const bool camera_changed =
+      cam.origin.x != m_prev_camera.origin.x
+      || cam.origin.y != m_prev_camera.origin.y
+      || cam.origin.z != m_prev_camera.origin.z
+      || cam.lower_left.x != m_prev_camera.lower_left.x
+      || cam.lower_left.y != m_prev_camera.lower_left.y
+      || cam.lower_left.z != m_prev_camera.lower_left.z
+      || cam.horizontal.x != m_prev_camera.horizontal.x
+      || cam.horizontal.y != m_prev_camera.horizontal.y
+      || cam.horizontal.z != m_prev_camera.horizontal.z
+      || cam.vertical.x != m_prev_camera.vertical.x
+      || cam.vertical.y != m_prev_camera.vertical.y
+      || cam.vertical.z != m_prev_camera.vertical.z
+      || cam.lens_radius != m_prev_camera.lens_radius
+      || cam.focus_dist != m_prev_camera.focus_dist
+      || cam.is_ortho != m_prev_camera.is_ortho;
+  const bool size_changed = (m_fb_w != m_accum_fb_w || m_fb_h != m_accum_fb_h);
+  const bool accum_dirty = scene_dirty || camera_changed || size_changed;
+
+  if (accum_dirty) {
+    m_frameID = 0;
+    m_prev_camera = cam;
+    m_accum_fb_w = m_fb_w;
+    m_accum_fb_h = m_fb_h;
+  }
+
+  // --- Cap accumulation (stop rendering once we reach the limit) ---
+  const int max_samples = 128;
+  if (m_frameID >= max_samples) {
+    // Already converged — just reuse the existing averaged buffers
+    m_lastDuration = 0.f;
+    return;
+  }
+
+  // --- Render with cached backend + scene ---
+  auto t0 = std::chrono::steady_clock::now();
 
   photon::pt::PathTracer pt;
   pt.params.width = m_fb_w;
   pt.params.height = m_fb_h;
   pt.params.samples_per_pixel = spp;
   pt.params.max_depth = max_depth;
+  pt.params.sample_offset = uint32_t(m_frameID);
   pt.camera = cam;
-  pt.set_scene(scene);
-  pt.set_backend(std::move(backend));
+  pt.set_scene(*m_scene);
+  pt.set_backend_ref(*m_backend);
 
   auto result = pt.render();
+
+  auto t1 = std::chrono::steady_clock::now();
+  m_lastDuration = std::chrono::duration<float>(t1 - t0).count();
 
   auto color_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.color);
   auto depth_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.depth);
   auto normal_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.normal);
   auto albedo_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.albedo);
 
-  m_channel_color.resize(size_t(m_fb_w) * size_t(m_fb_h) * 4);
-  m_channel_depth.resize(size_t(m_fb_w) * size_t(m_fb_h));
-  m_channel_normal.resize(size_t(m_fb_w) * size_t(m_fb_h) * 3);
-  m_channel_albedo.resize(size_t(m_fb_w) * size_t(m_fb_h) * 3);
+  const size_t num_pixels = size_t(m_fb_w) * size_t(m_fb_h);
 
+  // Resize accumulation and output buffers
+  m_accumColor.resize(num_pixels * 4, 0.f);
+  m_accumDepth.resize(num_pixels, 0.f);
+  m_accumNormal.resize(num_pixels * 3, 0.f);
+  m_accumAlbedo.resize(num_pixels * 3, 0.f);
+
+  m_channel_color.resize(num_pixels * 4);
+  m_channel_depth.resize(num_pixels);
+  m_channel_normal.resize(num_pixels * 3);
+  m_channel_albedo.resize(num_pixels * 3);
+
+  // If accumulation was reset, clear the buffers
+  if (m_frameID == 0) {
+    std::fill(m_accumColor.begin(), m_accumColor.end(), 0.f);
+    std::fill(m_accumDepth.begin(), m_accumDepth.end(), 0.f);
+    std::fill(m_accumNormal.begin(), m_accumNormal.end(), 0.f);
+    std::fill(m_accumAlbedo.begin(), m_accumAlbedo.end(), 0.f);
+  }
+
+  // Add this frame's contribution to the accumulation buffers
   for (uint32_t y = 0; y < m_fb_h; ++y) {
     for (uint32_t x = 0; x < m_fb_w; ++x) {
       const size_t idx = size_t(y) * size_t(m_fb_w) + x;
       const uint32_t src_y = m_fb_h - 1 - y;
 
-      const auto c = photon::pt::clamp01(color_host(src_y, x));
-      out[4 * idx + 0] = c.x;
-      out[4 * idx + 1] = c.y;
-      out[4 * idx + 2] = c.z;
-      out[4 * idx + 3] = 1.f;
+      const auto c = color_host(src_y, x);
+      m_accumColor[4 * idx + 0] += c.x;
+      m_accumColor[4 * idx + 1] += c.y;
+      m_accumColor[4 * idx + 2] += c.z;
+      m_accumColor[4 * idx + 3] += 1.f;
 
-      m_channel_color[4 * idx + 0] = c.x;
-      m_channel_color[4 * idx + 1] = c.y;
-      m_channel_color[4 * idx + 2] = c.z;
-      m_channel_color[4 * idx + 3] = 1.f;
-
-      m_channel_depth[idx] = depth_host(src_y, x);
+      m_accumDepth[idx] += depth_host(src_y, x);
 
       const auto n = normal_host(src_y, x);
-      m_channel_normal[3 * idx + 0] = n.x;
-      m_channel_normal[3 * idx + 1] = n.y;
-      m_channel_normal[3 * idx + 2] = n.z;
+      m_accumNormal[3 * idx + 0] += n.x;
+      m_accumNormal[3 * idx + 1] += n.y;
+      m_accumNormal[3 * idx + 2] += n.z;
 
       const auto a = albedo_host(src_y, x);
-      m_channel_albedo[3 * idx + 0] = a.x;
-      m_channel_albedo[3 * idx + 1] = a.y;
-      m_channel_albedo[3 * idx + 2] = a.z;
+      m_accumAlbedo[3 * idx + 0] += a.x;
+      m_accumAlbedo[3 * idx + 1] += a.y;
+      m_accumAlbedo[3 * idx + 2] += a.z;
     }
+  }
+
+  m_frameID += spp;
+
+  // Write averaged result to output buffers
+  const float inv = 1.f / float(m_frameID);
+  for (size_t idx = 0; idx < num_pixels; ++idx) {
+    const auto cr = photon::pt::clamp01({
+        m_accumColor[4 * idx + 0] * inv,
+        m_accumColor[4 * idx + 1] * inv,
+        m_accumColor[4 * idx + 2] * inv});
+    out[4 * idx + 0] = cr.x;
+    out[4 * idx + 1] = cr.y;
+    out[4 * idx + 2] = cr.z;
+    out[4 * idx + 3] = 1.f;
+
+    m_channel_color[4 * idx + 0] = cr.x;
+    m_channel_color[4 * idx + 1] = cr.y;
+    m_channel_color[4 * idx + 2] = cr.z;
+    m_channel_color[4 * idx + 3] = 1.f;
+
+    m_channel_depth[idx] = m_accumDepth[idx] * inv;
+
+    m_channel_normal[3 * idx + 0] = m_accumNormal[3 * idx + 0] * inv;
+    m_channel_normal[3 * idx + 1] = m_accumNormal[3 * idx + 1] * inv;
+    m_channel_normal[3 * idx + 2] = m_accumNormal[3 * idx + 2] * inv;
+
+    m_channel_albedo[3 * idx + 0] = m_accumAlbedo[3 * idx + 0] * inv;
+    m_channel_albedo[3 * idx + 1] = m_accumAlbedo[3 * idx + 1] * inv;
+    m_channel_albedo[3 * idx + 2] = m_accumAlbedo[3 * idx + 2] * inv;
   }
 }
 

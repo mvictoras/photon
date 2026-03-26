@@ -18,13 +18,21 @@ void PathTracer::set_scene(const Scene &scene)
 
 void PathTracer::set_backend(std::unique_ptr<RayBackend> backend)
 {
-  m_backend = std::move(backend);
+  m_backend_owned = std::move(backend);
+  m_backend = m_backend_owned.get();
+}
+
+void PathTracer::set_backend_ref(RayBackend &backend)
+{
+  m_backend_owned.reset();
+  m_backend = &backend;
 }
 
 static KOKKOS_FUNCTION Vec3 eval_sky_gradient(const Vec3 &dir)
 {
+  // Neutral grey-to-white gradient so the environment doesn't tint objects
   const f32 t = 0.5f * (dir.y + 1.f);
-  return (1.f - t) * Vec3{1.f, 1.f, 1.f} + t * Vec3{0.5f, 0.7f, 1.f};
+  return (1.f - t) * Vec3{0.6f, 0.6f, 0.6f} + t * Vec3{1.f, 1.f, 1.f};
 }
 
 RenderResult PathTracer::render() const
@@ -33,6 +41,7 @@ RenderResult PathTracer::render() const
   const u32 h = params.height;
   const u32 spp = params.samples_per_pixel;
   const u32 max_depth = params.max_depth;
+  const u32 sample_offset = params.sample_offset;
 
   RenderResult out;
   out.color = Kokkos::View<Vec3 **, Kokkos::LayoutRight>("pt_color", h, w);
@@ -123,7 +132,7 @@ RenderResult PathTracer::render() const
             }
           }
 
-          Rng rng(u32(1337u) ^ (u32(x) * 9781u) ^ (u32(y) * 6271u) ^ (s * 26699u));
+          Rng rng(u32(1337u) ^ (u32(x) * 9781u) ^ (u32(y) * 6271u) ^ ((s + sample_offset) * 26699u));
           const f32 u = (f32(x) + rng.next_f32()) / f32(w - 1);
           const f32 v = (f32(y) + rng.next_f32()) / f32(h - 1);
 
@@ -197,7 +206,7 @@ RenderResult PathTracer::render() const
             }
 
             if (alpha_val < 1.f) {
-              Rng alpha_rng(u32(1337u) ^ (u32(idx) * 7919u) ^ (bounce * 6271u) ^ (s * 26699u));
+              Rng alpha_rng(u32(1337u) ^ (u32(idx) * 7919u) ^ (bounce * 6271u) ^ ((s + sample_offset) * 26699u));
               if (alpha_rng.next_f32() > alpha_val) {
                 rays.origins(idx) = p + rays.directions(idx) * 0.01f;
                 rays.tmin(idx) = 1e-4f;
@@ -250,7 +259,7 @@ RenderResult PathTracer::render() const
               accum(idx) = accum(idx) + throughput(idx) * material_emission(mat);
             }
 
-            Rng rng(u32(1337u) ^ (u32(idx) * 9781u) ^ (bounce * 6271u) ^ (s * 26699u));
+            Rng rng(u32(1337u) ^ (u32(idx) * 9781u) ^ (bounce * 6271u) ^ ((s + sample_offset) * 26699u));
 
             if (!material_is_emissive(mat)) {
               if (light_count > 0 && mat.roughness >= 0.001f) {
