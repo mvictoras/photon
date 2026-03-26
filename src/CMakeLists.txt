@@ -136,7 +136,7 @@ with open(sys.argv[2], 'w') as f:
 
   add_custom_command(
     OUTPUT ${OPTIX_PTX_EMBED}
-    COMMAND python3 ${OPTIX_EMBED_SCRIPT} ${OPTIX_PTX_OUTPUT} ${OPTIX_PTX_EMBED}
+    COMMAND ${Python3_EXECUTABLE} ${OPTIX_EMBED_SCRIPT} ${OPTIX_PTX_OUTPUT} ${OPTIX_PTX_EMBED}
     DEPENDS ${OPTIX_PTX_OUTPUT}
     COMMENT "Embedding OptiX PTX into C++ source"
   )

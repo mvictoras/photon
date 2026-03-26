@@ -4,6 +4,8 @@ include(FetchContent)
 
 set(FETCHCONTENT_QUIET OFF)
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
 option(OPENCODE_ENABLE_CUDA "Enable Kokkos CUDA backend" ON)
 option(OPENCODE_ENABLE_HIP "Enable Kokkos HIP backend" OFF)
 option(OPENCODE_ENABLE_SYCL "Enable Kokkos SYCL backend" OFF)
@@ -20,7 +22,11 @@ else()
   message(STATUS "Pre-installed Kokkos not found — fetching via FetchContent (CUDA disabled)")
   # FetchContent Kokkos cannot use CUDA without nvcc_wrapper as global compiler
   set(Kokkos_ENABLE_SERIAL ON CACHE BOOL "" FORCE)
-  set(Kokkos_ENABLE_OPENMP ON CACHE BOOL "" FORCE)
+  if(MSVC)
+    set(Kokkos_ENABLE_OPENMP OFF CACHE BOOL "" FORCE)
+  else()
+    set(Kokkos_ENABLE_OPENMP ON CACHE BOOL "" FORCE)
+  endif()
   set(Kokkos_ENABLE_POSITION_INDEPENDENT_CODE ON CACHE BOOL "" FORCE)
   set(Kokkos_ENABLE_MDSPAN OFF CACHE BOOL "" FORCE)
 
