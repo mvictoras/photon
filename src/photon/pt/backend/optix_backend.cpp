@@ -8,9 +8,21 @@
 #include <cuda.h>
 #include <cstring>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 namespace photon::pt {
+
+// True when Kokkos default execution space is NOT CUDA.
+// In that case, Kokkos::View .data() returns host pointers which cannot
+// be dereferenced from OptiX device code; we must stage via cudaMemcpy.
+static constexpr bool needs_staging =
+#ifdef KOKKOS_ENABLE_CUDA
+    !std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::Cuda>::value;
+#else
+    true;  // No CUDA backend compiled into Kokkos -> always stage
+#endif
+
 namespace {
 
 struct Params {
@@ -53,6 +65,8 @@ static void optix_log_callback(unsigned int level, const char *tag, const char *
     std::fprintf(stderr, "[photon][optix][%s] %s\n", tag ? tag : "", message ? message : "");
 }
 
+} // anonymous namespace
+
 inline void check_optix(const OptixResult r, const char *what)
 {
   if (r != OPTIX_SUCCESS)
@@ -65,6 +79,30 @@ inline void check_cuda(const cudaError_t e, const char *what)
     throw std::runtime_error(std::string("CUDA error ") + what + ": " + cudaGetErrorString(e));
 }
 
+// Upload host data to a new CUDA device allocation. Returns device pointer.
+static void *cuda_upload(const void *host_ptr, size_t bytes)
+{
+  if (!host_ptr || bytes == 0) return nullptr;
+  void *d = nullptr;
+  check_cuda(static_cast<cudaError_t>(cudaMalloc(&d, bytes)), "staging alloc");
+  check_cuda(cudaMemcpy(d, host_ptr, bytes, cudaMemcpyHostToDevice), "staging upload");
+  return d;
+}
+
+// Allocate device memory and return pointer (contents undefined).
+static void *cuda_alloc(size_t bytes)
+{
+  if (bytes == 0) return nullptr;
+  void *d = nullptr;
+  check_cuda(static_cast<cudaError_t>(cudaMalloc(&d, bytes)), "staging alloc out");
+  return d;
+}
+
+// Download device data to host.
+static void cuda_download(void *host_ptr, const void *dev_ptr, size_t bytes)
+{
+  if (!host_ptr || !dev_ptr || bytes == 0) return;
+  check_cuda(cudaMemcpy(host_ptr, dev_ptr, bytes, cudaMemcpyDeviceToHost), "staging download");
 }
 
 OptixBackend::OptixBackend()
@@ -78,14 +116,55 @@ OptixBackend::OptixBackend()
   check_optix(optixDeviceContextCreate(cu_ctx, &options, &m_context), "optixDeviceContextCreate");
 }
 
+void OptixBackend::free_device_mesh_buffers()
+{
+  if (m_d_mesh_positions)    { cudaFree(m_d_mesh_positions);    m_d_mesh_positions = nullptr; }
+  if (m_d_mesh_indices)      { cudaFree(m_d_mesh_indices);      m_d_mesh_indices = nullptr; }
+  if (m_d_mesh_normals)      { cudaFree(m_d_mesh_normals);      m_d_mesh_normals = nullptr; }
+  if (m_d_mesh_texcoords)    { cudaFree(m_d_mesh_texcoords);    m_d_mesh_texcoords = nullptr; }
+  if (m_d_mesh_material_ids) { cudaFree(m_d_mesh_material_ids); m_d_mesh_material_ids = nullptr; }
+  if (m_d_mesh_vertex_colors){ cudaFree(m_d_mesh_vertex_colors);m_d_mesh_vertex_colors = nullptr; }
+}
+
+void OptixBackend::free_staging_buffers()
+{
+  if (m_d_ray_origins)    { cudaFree(m_d_ray_origins);    m_d_ray_origins = nullptr; }
+  if (m_d_ray_directions) { cudaFree(m_d_ray_directions); m_d_ray_directions = nullptr; }
+  if (m_d_ray_tmin)       { cudaFree(m_d_ray_tmin);       m_d_ray_tmin = nullptr; }
+  if (m_d_ray_tmax)       { cudaFree(m_d_ray_tmax);       m_d_ray_tmax = nullptr; }
+  if (m_d_hit_results)    { cudaFree(m_d_hit_results);    m_d_hit_results = nullptr; }
+  if (m_d_occluded)       { cudaFree(m_d_occluded);       m_d_occluded = nullptr; }
+  m_staging_capacity = 0;
+}
+
+void OptixBackend::ensure_staging_buffers(u32 count)
+{
+  if (count <= m_staging_capacity) return;
+
+  free_staging_buffers();
+  m_staging_capacity = count;
+
+  check_cuda(static_cast<cudaError_t>(cudaMalloc(&m_d_ray_origins,    count * sizeof(Vec3))),      "staging origins");
+  check_cuda(static_cast<cudaError_t>(cudaMalloc(&m_d_ray_directions, count * sizeof(Vec3))),      "staging dirs");
+  check_cuda(static_cast<cudaError_t>(cudaMalloc(&m_d_ray_tmin,       count * sizeof(f32))),       "staging tmin");
+  check_cuda(static_cast<cudaError_t>(cudaMalloc(&m_d_ray_tmax,       count * sizeof(f32))),       "staging tmax");
+  check_cuda(static_cast<cudaError_t>(cudaMalloc(&m_d_hit_results,    count * sizeof(HitResult))), "staging hits");
+  check_cuda(static_cast<cudaError_t>(cudaMalloc(&m_d_occluded,       count * sizeof(u32))),       "staging occluded");
+}
+
 OptixBackend::~OptixBackend()
 {
+  free_staging_buffers();
+  free_device_mesh_buffers();
   if (m_pipeline) optixPipelineDestroy(m_pipeline);
   if (m_module) optixModuleDestroy(m_module);
   if (m_gas_buffer) cudaFree(reinterpret_cast<void *>(m_gas_buffer));
   if (m_d_params) cudaFree(reinterpret_cast<void *>(m_d_params));
   if (m_context) optixDeviceContextDestroy(m_context);
 }
+
+extern const char photon_optix_ptx[];
+extern const unsigned long long photon_optix_ptx_size;
 
 void OptixBackend::create_pipeline()
 {
@@ -103,9 +182,6 @@ void OptixBackend::create_pipeline()
   module_compile_options.maxRegisterCount = OPTIX_COMPILE_DEFAULT_MAX_REGISTER_COUNT;
   module_compile_options.optLevel = OPTIX_COMPILE_OPTIMIZATION_DEFAULT;
   module_compile_options.debugLevel = OPTIX_COMPILE_DEBUG_LEVEL_NONE;
-
-  extern const char photon_optix_ptx[];
-  extern const unsigned long long photon_optix_ptx_size;
 
   char log[2048]{};
   size_t log_size = sizeof(log);
@@ -257,31 +333,71 @@ void OptixBackend::build_accel(const Scene &scene)
       tri_count, float(compacted_size > 0 ? compacted_size : buffer_sizes.outputSizeInBytes) / 1024.f);
 
   create_pipeline();
+
+  // When Kokkos uses a non-CUDA backend (Serial, OpenMP, etc.), the mesh
+  // views live in host memory.  Upload them to persistent device buffers
+  // so the OptiX closest-hit shader can access mesh attributes.
+  if (needs_staging) {
+    free_device_mesh_buffers();
+    m_d_mesh_positions = cuda_upload(m_mesh.positions.data(),
+        m_mesh.positions.extent(0) * sizeof(Vec3));
+    m_d_mesh_indices = cuda_upload(m_mesh.indices.data(),
+        m_mesh.indices.extent(0) * sizeof(u32));
+    if (m_mesh.has_normals())
+      m_d_mesh_normals = cuda_upload(m_mesh.normals.data(),
+          m_mesh.normals.extent(0) * sizeof(Vec3));
+    if (m_mesh.has_texcoords())
+      m_d_mesh_texcoords = cuda_upload(m_mesh.texcoords.data(),
+          m_mesh.texcoords.extent(0) * sizeof(Vec2));
+    if (m_mesh.has_material_ids())
+      m_d_mesh_material_ids = cuda_upload(m_mesh.material_ids.data(),
+          m_mesh.material_ids.extent(0) * sizeof(u32));
+    if (m_mesh.has_vertex_colors())
+      m_d_mesh_vertex_colors = cuda_upload(m_mesh.vertex_colors.data(),
+          m_mesh.vertex_colors.extent(0) * sizeof(Vec3));
+  }
 }
 
 void OptixBackend::trace_closest(const RayBatch &rays, HitBatch &hits)
 {
   const u32 n = rays.count;
 
+  if (needs_staging) {
+    ensure_staging_buffers(n);
+    check_cuda(cudaMemcpy(m_d_ray_origins,    rays.origins.data(),    n * sizeof(Vec3), cudaMemcpyHostToDevice), "upload origins");
+    check_cuda(cudaMemcpy(m_d_ray_directions, rays.directions.data(), n * sizeof(Vec3), cudaMemcpyHostToDevice), "upload dirs");
+    check_cuda(cudaMemcpy(m_d_ray_tmin,       rays.tmin.data(),       n * sizeof(f32),  cudaMemcpyHostToDevice), "upload tmin");
+    check_cuda(cudaMemcpy(m_d_ray_tmax,       rays.tmax.data(),       n * sizeof(f32),  cudaMemcpyHostToDevice), "upload tmax");
+  }
+
   Params params{};
   params.handle = m_gas_handle;
-  params.origins = reinterpret_cast<float3 *>(rays.origins.data());
-  params.directions = reinterpret_cast<float3 *>(rays.directions.data());
-  params.tmin = rays.tmin.data();
-  params.tmax = rays.tmax.data();
-  params.hit_results = hits.hits.data();
+  params.origins    = reinterpret_cast<float3 *>(needs_staging ? m_d_ray_origins    : rays.origins.data());
+  params.directions = reinterpret_cast<float3 *>(needs_staging ? m_d_ray_directions : rays.directions.data());
+  params.tmin       = reinterpret_cast<float *> (needs_staging ? m_d_ray_tmin       : rays.tmin.data());
+  params.tmax       = reinterpret_cast<float *> (needs_staging ? m_d_ray_tmax       : rays.tmax.data());
+  params.hit_results = needs_staging ? m_d_hit_results : hits.hits.data();
   params.occluded = nullptr;
 
-  params.mesh_positions = reinterpret_cast<float3 *>(m_mesh.positions.data());
-  params.mesh_indices = reinterpret_cast<unsigned int *>(m_mesh.indices.data());
-  params.mesh_normals = m_mesh.has_normals() ? reinterpret_cast<float3 *>(m_mesh.normals.data()) : nullptr;
-  params.mesh_texcoords = m_mesh.has_texcoords() ? reinterpret_cast<float2 *>(m_mesh.texcoords.data()) : nullptr;
-  params.mesh_material_ids = m_mesh.has_material_ids() ? reinterpret_cast<unsigned int *>(m_mesh.material_ids.data()) : nullptr;
-  params.mesh_vertex_colors = m_mesh.has_vertex_colors() ? reinterpret_cast<float3 *>(m_mesh.vertex_colors.data()) : nullptr;
+  if (needs_staging) {
+    params.mesh_positions     = reinterpret_cast<float3 *>(m_d_mesh_positions);
+    params.mesh_indices       = reinterpret_cast<unsigned int *>(m_d_mesh_indices);
+    params.mesh_normals       = reinterpret_cast<float3 *>(m_d_mesh_normals);
+    params.mesh_texcoords     = reinterpret_cast<float2 *>(m_d_mesh_texcoords);
+    params.mesh_material_ids  = reinterpret_cast<unsigned int *>(m_d_mesh_material_ids);
+    params.mesh_vertex_colors = reinterpret_cast<float3 *>(m_d_mesh_vertex_colors);
+  } else {
+    params.mesh_positions     = reinterpret_cast<float3 *>(m_mesh.positions.data());
+    params.mesh_indices       = reinterpret_cast<unsigned int *>(m_mesh.indices.data());
+    params.mesh_normals       = m_mesh.has_normals()       ? reinterpret_cast<float3 *>(m_mesh.normals.data()) : nullptr;
+    params.mesh_texcoords     = m_mesh.has_texcoords()     ? reinterpret_cast<float2 *>(m_mesh.texcoords.data()) : nullptr;
+    params.mesh_material_ids  = m_mesh.has_material_ids()  ? reinterpret_cast<unsigned int *>(m_mesh.material_ids.data()) : nullptr;
+    params.mesh_vertex_colors = m_mesh.has_vertex_colors() ? reinterpret_cast<float3 *>(m_mesh.vertex_colors.data()) : nullptr;
+  }
 
-  params.has_normals = m_mesh.has_normals() ? 1 : 0;
-  params.has_texcoords = m_mesh.has_texcoords() ? 1 : 0;
-  params.has_material_ids = m_mesh.has_material_ids() ? 1 : 0;
+  params.has_normals       = m_mesh.has_normals()       ? 1 : 0;
+  params.has_texcoords     = m_mesh.has_texcoords()     ? 1 : 0;
+  params.has_material_ids  = m_mesh.has_material_ids()  ? 1 : 0;
   params.has_vertex_colors = m_mesh.has_vertex_colors() ? 1 : 0;
 
   params.count = n;
@@ -290,26 +406,42 @@ void OptixBackend::trace_closest(const RayBatch &rays, HitBatch &hits)
   check_cuda(cudaMemcpy(reinterpret_cast<void *>(m_d_params), &params, sizeof(Params), cudaMemcpyHostToDevice), "params cp");
   check_optix(optixLaunch(m_pipeline, 0, m_d_params, sizeof(Params), &m_sbt, n, 1, 1), "launch closest");
   check_cuda(cudaDeviceSynchronize(), "sync closest");
+
+  if (needs_staging) {
+    check_cuda(cudaMemcpy(hits.hits.data(), m_d_hit_results, n * sizeof(HitResult), cudaMemcpyDeviceToHost), "download hits");
+  }
 }
 
 void OptixBackend::trace_occluded(const RayBatch &rays, Kokkos::View<u32 *> occluded)
 {
   const u32 n = rays.count;
 
+  if (needs_staging) {
+    ensure_staging_buffers(n);
+    check_cuda(cudaMemcpy(m_d_ray_origins,    rays.origins.data(),    n * sizeof(Vec3), cudaMemcpyHostToDevice), "upload origins");
+    check_cuda(cudaMemcpy(m_d_ray_directions, rays.directions.data(), n * sizeof(Vec3), cudaMemcpyHostToDevice), "upload dirs");
+    check_cuda(cudaMemcpy(m_d_ray_tmin,       rays.tmin.data(),       n * sizeof(f32),  cudaMemcpyHostToDevice), "upload tmin");
+    check_cuda(cudaMemcpy(m_d_ray_tmax,       rays.tmax.data(),       n * sizeof(f32),  cudaMemcpyHostToDevice), "upload tmax");
+  }
+
   Params params{};
   params.handle = m_gas_handle;
-  params.origins = reinterpret_cast<float3 *>(rays.origins.data());
-  params.directions = reinterpret_cast<float3 *>(rays.directions.data());
-  params.tmin = rays.tmin.data();
-  params.tmax = rays.tmax.data();
+  params.origins    = reinterpret_cast<float3 *>(needs_staging ? m_d_ray_origins    : rays.origins.data());
+  params.directions = reinterpret_cast<float3 *>(needs_staging ? m_d_ray_directions : rays.directions.data());
+  params.tmin       = reinterpret_cast<float *> (needs_staging ? m_d_ray_tmin       : rays.tmin.data());
+  params.tmax       = reinterpret_cast<float *> (needs_staging ? m_d_ray_tmax       : rays.tmax.data());
   params.hit_results = nullptr;
-  params.occluded = reinterpret_cast<unsigned int *>(occluded.data());
+  params.occluded   = reinterpret_cast<unsigned int *>(needs_staging ? m_d_occluded : occluded.data());
   params.count = n;
   params.mode = 1;
 
   check_cuda(cudaMemcpy(reinterpret_cast<void *>(m_d_params), &params, sizeof(Params), cudaMemcpyHostToDevice), "params cp");
   check_optix(optixLaunch(m_pipeline, 0, m_d_params, sizeof(Params), &m_sbt, n, 1, 1), "launch occluded");
   check_cuda(cudaDeviceSynchronize(), "sync occluded");
+
+  if (needs_staging) {
+    check_cuda(cudaMemcpy(occluded.data(), m_d_occluded, n * sizeof(u32), cudaMemcpyDeviceToHost), "download occluded");
+  }
 }
 
 }
