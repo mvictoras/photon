@@ -9,7 +9,7 @@
 #include <Kokkos_Core.hpp>
 
 #include "photon/pt/pathtracer.h"
-#include "photon/pt/backend/kokkos_backend.h"
+#include "photon/pt/backend/ray_backend.h"
 #include "photon/pt/scene/builder.h"
 
 #include "photon/anari/SceneFromAnari.h"
@@ -709,7 +709,7 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
 
   photon::pt::Camera cam = build_camera_from_anari(fb, *this);
 
-  auto backend = std::make_unique<photon::pt::KokkosBackend>();
+  auto backend = photon::pt::create_best_backend();
   backend->build_accel(scene);
 
   photon::pt::PathTracer pt;
