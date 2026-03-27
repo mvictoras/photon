@@ -121,6 +121,8 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
     std::optional<photon::pt::Scene> m_scene;
     uint64_t m_scene_version{0};       // version when scene was last built
     uint64_t m_world_commit_version{0}; // bumped on scene-affecting commits
+    uint64_t m_renderer_version{0};     // bumped on renderer commits
+    uint64_t m_prev_renderer_version{0}; // renderer version at last frame
 
     // Accumulation state
     int m_frameID{0};                    // accumulated sample count

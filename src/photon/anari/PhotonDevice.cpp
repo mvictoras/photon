@@ -349,7 +349,7 @@ const char **PhotonDevice::getObjectSubtypes(ANARIDataType objectType)
 
 const void *PhotonDevice::getObjectInfo(
     ANARIDataType objectType,
-    const char *,
+    const char *objectSubtype,
     const char *infoName,
     ANARIDataType infoType)
 {
@@ -359,12 +359,103 @@ const void *PhotonDevice::getObjectInfo(
     static const char *extensions[] = {nullptr};
     return extensions;
   }
+
+  // Renderer "default" — report available parameters
+  if (objectType == ANARI_RENDERER && infoName
+      && std::strcmp(infoName, "parameter") == 0
+      && infoType == ANARI_PARAMETER_LIST) {
+    static const ANARIParameter params[] = {
+        {"pixelSamples", ANARI_INT32},
+        {"sampleLimit", ANARI_INT32},
+        {"maxRayDepth", ANARI_INT32},
+        {nullptr, ANARI_UNKNOWN},
+    };
+    return params;
+  }
+
   return nullptr;
 }
 
 const void *PhotonDevice::getParameterInfo(
-    ANARIDataType, const char *, const char *, ANARIDataType, const char *, ANARIDataType)
+    ANARIDataType objectType,
+    const char *objectSubtype,
+    const char *parameterName,
+    ANARIDataType parameterType,
+    const char *infoName,
+    ANARIDataType infoType)
 {
+  if (objectType != ANARI_RENDERER || !parameterName || !infoName)
+    return nullptr;
+
+  // --- pixelSamples (INT32) ---
+  if (std::strcmp(parameterName, "pixelSamples") == 0
+      && parameterType == ANARI_INT32) {
+    if (std::strcmp(infoName, "default") == 0 && infoType == ANARI_INT32) {
+      static const int32_t val = 1;
+      return &val;
+    }
+    if (std::strcmp(infoName, "minimum") == 0 && infoType == ANARI_INT32) {
+      static const int32_t val = 1;
+      return &val;
+    }
+    if (std::strcmp(infoName, "description") == 0
+        && infoType == ANARI_STRING) {
+      static const char *desc = "samples per pixel per frame";
+      return desc;
+    }
+    if (std::strcmp(infoName, "required") == 0 && infoType == ANARI_BOOL) {
+      static const int32_t val = 0;
+      return &val;
+    }
+    return nullptr;
+  }
+
+  // --- sampleLimit (INT32) ---
+  if (std::strcmp(parameterName, "sampleLimit") == 0
+      && parameterType == ANARI_INT32) {
+    if (std::strcmp(infoName, "default") == 0 && infoType == ANARI_INT32) {
+      static const int32_t val = 128;
+      return &val;
+    }
+    if (std::strcmp(infoName, "minimum") == 0 && infoType == ANARI_INT32) {
+      static const int32_t val = 0;
+      return &val;
+    }
+    if (std::strcmp(infoName, "description") == 0
+        && infoType == ANARI_STRING) {
+      static const char *desc = "stop refining after this number of samples";
+      return desc;
+    }
+    if (std::strcmp(infoName, "required") == 0 && infoType == ANARI_BOOL) {
+      static const int32_t val = 0;
+      return &val;
+    }
+    return nullptr;
+  }
+
+  // --- maxRayDepth (INT32) ---
+  if (std::strcmp(parameterName, "maxRayDepth") == 0
+      && parameterType == ANARI_INT32) {
+    if (std::strcmp(infoName, "default") == 0 && infoType == ANARI_INT32) {
+      static const int32_t val = 5;
+      return &val;
+    }
+    if (std::strcmp(infoName, "minimum") == 0 && infoType == ANARI_INT32) {
+      static const int32_t val = 1;
+      return &val;
+    }
+    if (std::strcmp(infoName, "description") == 0
+        && infoType == ANARI_STRING) {
+      static const char *desc = "maximum number of ray bounces";
+      return desc;
+    }
+    if (std::strcmp(infoName, "required") == 0 && infoType == ANARI_BOOL) {
+      static const int32_t val = 0;
+      return &val;
+    }
+    return nullptr;
+  }
+
   return nullptr;
 }
 
@@ -606,8 +697,10 @@ void PhotonDevice::commitParameters(ANARIObject object)
   case ANARI_SAMPLER:
     ++m_world_commit_version;
     break;
-  case ANARI_CAMERA:
   case ANARI_RENDERER:
+    ++m_renderer_version;
+    break;
+  case ANARI_CAMERA:
   case ANARI_FRAME:
     break;
   default:
@@ -808,6 +901,9 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
       pit = ro->params.find("maxDepth");
       if (pit != ro->params.end() && pit->second.size() == sizeof(uint32_t))
         std::memcpy(&max_depth, pit->second.data(), sizeof(uint32_t));
+      pit = ro->params.find("maxRayDepth");
+      if (pit != ro->params.end() && pit->second.size() == sizeof(uint32_t))
+        std::memcpy(&max_depth, pit->second.data(), sizeof(uint32_t));
     }
   }
 
@@ -847,18 +943,31 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
       || cam.focus_dist != m_prev_camera.focus_dist
       || cam.is_ortho != m_prev_camera.is_ortho;
   const bool size_changed = (m_fb_w != m_accum_fb_w || m_fb_h != m_accum_fb_h);
-  const bool accum_dirty = scene_dirty || camera_changed || size_changed;
+  const bool renderer_changed = (m_renderer_version != m_prev_renderer_version);
+  const bool accum_dirty = scene_dirty || camera_changed || size_changed || renderer_changed;
 
   if (accum_dirty) {
     m_frameID = 0;
     m_prev_camera = cam;
     m_accum_fb_w = m_fb_w;
     m_accum_fb_h = m_fb_h;
+    m_prev_renderer_version = m_renderer_version;
+  }
+
+  // --- Read sampleLimit from renderer params ---
+  int32_t max_samples = 128;
+  if (renderer_h != 0) {
+    auto *ro = get((ANARIObject)renderer_h);
+    if (ro) {
+      auto pit = ro->params.find("sampleLimit");
+      if (pit != ro->params.end() && pit->second.size() == sizeof(int32_t))
+        std::memcpy(&max_samples, pit->second.data(), sizeof(int32_t));
+    }
   }
 
   // --- Cap accumulation (stop rendering once we reach the limit) ---
-  const int max_samples = 128;
-  if (m_frameID >= max_samples) {
+  // sampleLimit == 0 means unlimited
+  if (max_samples > 0 && m_frameID >= max_samples) {
     // Already converged — just reuse the existing averaged buffers
     m_lastDuration = 0.f;
     return;
