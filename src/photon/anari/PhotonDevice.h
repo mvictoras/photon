@@ -16,6 +16,7 @@
 #include "photon/pt/denoiser.h"
 
 #include "photon/pt/camera.h"
+#include "photon/pt/pathtracer.h"
 #include "photon/pt/scene.h"
 #include "photon/pt/backend/ray_backend.h"
 
@@ -121,17 +122,31 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
     // Cached rendering state — persist across frames
     std::unique_ptr<photon::pt::RayBackend> m_backend;
     std::optional<photon::pt::Scene> m_scene;
+    photon::pt::PathTracer m_pathtracer; // persistent PathTracer (caches GPU views)
     uint64_t m_scene_version{0};       // version when scene was last built
     uint64_t m_world_commit_version{0}; // bumped on scene-affecting commits
     uint64_t m_renderer_version{0};     // bumped on renderer commits
     uint64_t m_prev_renderer_version{0}; // renderer version at last frame
 
-    // Accumulation state
+    // GPU-resident accumulation buffers (Kokkos::View)
     int m_frameID{0};                    // accumulated sample count
-    std::vector<float> m_accumColor;     // running sum (RGBA per pixel)
-    std::vector<float> m_accumDepth;     // running sum (1 float per pixel)
-    std::vector<float> m_accumNormal;    // running sum (3 floats per pixel)
-    std::vector<float> m_accumAlbedo;    // running sum (3 floats per pixel)
+    Kokkos::View<photon::pt::Vec3 **,
+                 Kokkos::LayoutRight> m_gpu_accumColor;  // running sum (RGB per pixel)
+    Kokkos::View<photon::pt::f32 **,
+                 Kokkos::LayoutRight> m_gpu_accumDepth;  // running sum (1 float per pixel)
+    Kokkos::View<photon::pt::Vec3 **,
+                 Kokkos::LayoutRight> m_gpu_accumNormal; // running sum (Vec3 per pixel)
+    Kokkos::View<photon::pt::Vec3 **,
+                 Kokkos::LayoutRight> m_gpu_accumAlbedo; // running sum (Vec3 per pixel)
+    // GPU output views for averaged result (ready for single host copy)
+    Kokkos::View<photon::pt::Vec3 **,
+                 Kokkos::LayoutRight> m_gpu_avgColor;
+    Kokkos::View<photon::pt::f32 **,
+                 Kokkos::LayoutRight> m_gpu_avgDepth;
+    Kokkos::View<photon::pt::Vec3 **,
+                 Kokkos::LayoutRight> m_gpu_avgNormal;
+    Kokkos::View<photon::pt::Vec3 **,
+                 Kokkos::LayoutRight> m_gpu_avgAlbedo;
     float m_lastDuration{0.f};           // seconds for last renderFrame
     uint32_t m_accum_fb_w{0}, m_accum_fb_h{0}; // resolution when accum started
     photon::pt::Camera m_prev_camera{};  // camera from previous frame
