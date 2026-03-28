@@ -155,8 +155,9 @@ endif()
 option(PHOTON_ENABLE_OIDN "Enable Intel OIDN denoiser" ON)
 set(PHOTON_OIDN_READY FALSE CACHE INTERNAL "")
 if(PHOTON_ENABLE_OIDN)
+  # Try system-installed OIDN first
   find_package(OpenImageDenoise 2 QUIET
-    HINTS /opt/hfs21.0.596/toolkit/cmake)
+    HINTS /opt/hfs21.0.596/toolkit/cmake $ENV{OIDN_DIR}/lib/cmake)
   if(OpenImageDenoise_FOUND)
     set(PHOTON_OIDN_READY TRUE CACHE INTERNAL "")
     message(STATUS "OIDN found: ${OpenImageDenoise_DIR}")
@@ -170,8 +171,45 @@ if(PHOTON_ENABLE_OIDN)
       set(PHOTON_OIDN_INCLUDE "${OIDN_INCLUDE_DIR}" CACHE INTERNAL "")
       set(PHOTON_OIDN_LIB "${OIDN_LIBRARY}" CACHE INTERNAL "")
       message(STATUS "OIDN found manually: ${OIDN_INCLUDE_DIR}")
+    endif()
+  endif()
+
+  # If not found, download prebuilt OIDN binaries
+  if(NOT PHOTON_OIDN_READY)
+    set(OIDN_VERSION "2.3.1")
+    if(WIN32)
+      set(OIDN_PLATFORM "x64.windows")
+      set(OIDN_EXT "zip")
+    elseif(APPLE)
+      set(OIDN_PLATFORM "x86_64.macos")
+      set(OIDN_EXT "tar.gz")
     else()
-      message(STATUS "Intel OIDN not found — denoiser disabled")
+      set(OIDN_PLATFORM "x86_64.linux")
+      set(OIDN_EXT "tar.gz")
+    endif()
+    set(OIDN_ARCHIVE "oidn-${OIDN_VERSION}.${OIDN_PLATFORM}")
+    set(OIDN_URL "https://github.com/RenderKit/oidn/releases/download/v${OIDN_VERSION}/${OIDN_ARCHIVE}.${OIDN_EXT}")
+
+    message(STATUS "OIDN not found — downloading prebuilt v${OIDN_VERSION} from ${OIDN_URL}")
+    FetchContent_Declare(
+      oidn_prebuilt
+      URL ${OIDN_URL}
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(oidn_prebuilt)
+
+    set(OIDN_PREFIX "${oidn_prebuilt_SOURCE_DIR}")
+    set(PHOTON_OIDN_INCLUDE "${OIDN_PREFIX}/include" CACHE INTERNAL "")
+
+    # Find the library — prebuilt layout: lib/OpenImageDenoise.lib (Windows) or lib/libOpenImageDenoise.so
+    find_library(OIDN_PREBUILT_LIB NAMES OpenImageDenoise
+      PATHS "${OIDN_PREFIX}/lib" NO_DEFAULT_PATH)
+    if(OIDN_PREBUILT_LIB)
+      set(PHOTON_OIDN_LIB "${OIDN_PREBUILT_LIB}" CACHE INTERNAL "")
+      set(PHOTON_OIDN_READY TRUE CACHE INTERNAL "")
+      message(STATUS "OIDN downloaded: ${OIDN_PREFIX}")
+    else()
+      message(WARNING "OIDN download succeeded but library not found in ${OIDN_PREFIX}/lib")
     endif()
   endif()
 endif()
