@@ -18,6 +18,10 @@ struct RenderParams {
   u32 samples_per_pixel{8};
   u32 max_depth{5};
   u32 sample_offset{0}; // offset added to RNG seed for accumulation across frames
+  Vec3 background_color{0.f, 0.f, 0.f};
+  f32 background_alpha{1.f};
+  Vec3 ambient_color{1.f, 1.f, 1.f};
+  f32 ambient_radiance{0.f};
 };
 
 struct RenderResult {

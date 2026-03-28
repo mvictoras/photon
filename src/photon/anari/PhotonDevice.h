@@ -13,6 +13,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "photon/pt/denoiser.h"
+
 #include "photon/pt/camera.h"
 #include "photon/pt/scene.h"
 #include "photon/pt/backend/ray_backend.h"
@@ -133,6 +135,12 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
     float m_lastDuration{0.f};           // seconds for last renderFrame
     uint32_t m_accum_fb_w{0}, m_accum_fb_h{0}; // resolution when accum started
     photon::pt::Camera m_prev_camera{};  // camera from previous frame
+
+    // Denoiser (persistent across frames)
+#ifdef PHOTON_HAS_OIDN
+    photon::pt::Denoiser m_denoiser;
+    std::vector<float> m_denoise_rgb;    // temp RGB buffer for denoiser
+#endif
 };
 
 }

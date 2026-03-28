@@ -10,6 +10,7 @@
 #include <Kokkos_Core.hpp>
 
 #include "photon/pt/pathtracer.h"
+// denoiser.h included via PhotonDevice.h
 #include "photon/pt/backend/ray_backend.h"
 #include "photon/pt/scene/builder.h"
 
@@ -368,6 +369,12 @@ const void *PhotonDevice::getObjectInfo(
         {"pixelSamples", ANARI_INT32},
         {"sampleLimit", ANARI_INT32},
         {"maxRayDepth", ANARI_INT32},
+        {"background", ANARI_FLOAT32_VEC4},
+        {"ambientColor", ANARI_FLOAT32_VEC3},
+        {"ambientRadiance", ANARI_FLOAT32},
+#ifdef PHOTON_HAS_OIDN
+        {"denoise", ANARI_BOOL},
+#endif
         {nullptr, ANARI_UNKNOWN},
     };
     return params;
@@ -455,6 +462,90 @@ const void *PhotonDevice::getParameterInfo(
     }
     return nullptr;
   }
+
+  // --- background (FLOAT32_VEC4) ---
+  if (std::strcmp(parameterName, "background") == 0
+      && parameterType == ANARI_FLOAT32_VEC4) {
+    if (std::strcmp(infoName, "default") == 0
+        && infoType == ANARI_FLOAT32_VEC4) {
+      static const float val[4] = {0.f, 0.f, 0.f, 1.f};
+      return val;
+    }
+    if (std::strcmp(infoName, "description") == 0
+        && infoType == ANARI_STRING) {
+      static const char *desc = "background color (RGBA)";
+      return desc;
+    }
+    if (std::strcmp(infoName, "required") == 0 && infoType == ANARI_BOOL) {
+      static const int32_t val = 0;
+      return &val;
+    }
+    return nullptr;
+  }
+
+  // --- ambientColor (FLOAT32_VEC3) ---
+  if (std::strcmp(parameterName, "ambientColor") == 0
+      && parameterType == ANARI_FLOAT32_VEC3) {
+    if (std::strcmp(infoName, "default") == 0
+        && infoType == ANARI_FLOAT32_VEC3) {
+      static const float val[3] = {1.f, 1.f, 1.f};
+      return val;
+    }
+    if (std::strcmp(infoName, "description") == 0
+        && infoType == ANARI_STRING) {
+      static const char *desc = "color of the ambient light";
+      return desc;
+    }
+    if (std::strcmp(infoName, "required") == 0 && infoType == ANARI_BOOL) {
+      static const int32_t val = 0;
+      return &val;
+    }
+    return nullptr;
+  }
+
+  // --- ambientRadiance (FLOAT32) ---
+  if (std::strcmp(parameterName, "ambientRadiance") == 0
+      && parameterType == ANARI_FLOAT32) {
+    if (std::strcmp(infoName, "default") == 0 && infoType == ANARI_FLOAT32) {
+      static const float val = 0.f;
+      return &val;
+    }
+    if (std::strcmp(infoName, "minimum") == 0 && infoType == ANARI_FLOAT32) {
+      static const float val = 0.f;
+      return &val;
+    }
+    if (std::strcmp(infoName, "description") == 0
+        && infoType == ANARI_STRING) {
+      static const char *desc = "intensity of the ambient light";
+      return desc;
+    }
+    if (std::strcmp(infoName, "required") == 0 && infoType == ANARI_BOOL) {
+      static const int32_t val = 0;
+      return &val;
+    }
+    return nullptr;
+  }
+
+#ifdef PHOTON_HAS_OIDN
+  // --- denoise (BOOL) ---
+  if (std::strcmp(parameterName, "denoise") == 0
+      && parameterType == ANARI_BOOL) {
+    if (std::strcmp(infoName, "default") == 0 && infoType == ANARI_BOOL) {
+      static const int32_t val = 0;
+      return &val;
+    }
+    if (std::strcmp(infoName, "description") == 0
+        && infoType == ANARI_STRING) {
+      static const char *desc = "enable denoising";
+      return desc;
+    }
+    if (std::strcmp(infoName, "required") == 0 && infoType == ANARI_BOOL) {
+      static const int32_t val = 0;
+      return &val;
+    }
+    return nullptr;
+  }
+#endif
 
   return nullptr;
 }
@@ -907,6 +998,37 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
     }
   }
 
+  // --- Read background, ambientColor, ambientRadiance from renderer ---
+  float bg_rgba[4] = {0.f, 0.f, 0.f, 1.f};
+  float ambient_color[3] = {1.f, 1.f, 1.f};
+  float ambient_radiance = 0.f;
+#ifdef PHOTON_HAS_OIDN
+  int32_t denoise = 0;
+#endif
+
+  if (renderer_h != 0) {
+    auto *ro = get((ANARIObject)renderer_h);
+    if (ro) {
+      auto pit = ro->params.find("background");
+      if (pit != ro->params.end() && pit->second.size() == 4 * sizeof(float))
+        std::memcpy(bg_rgba, pit->second.data(), 4 * sizeof(float));
+
+      pit = ro->params.find("ambientColor");
+      if (pit != ro->params.end() && pit->second.size() == 3 * sizeof(float))
+        std::memcpy(ambient_color, pit->second.data(), 3 * sizeof(float));
+
+      pit = ro->params.find("ambientRadiance");
+      if (pit != ro->params.end() && pit->second.size() == sizeof(float))
+        std::memcpy(&ambient_radiance, pit->second.data(), sizeof(float));
+
+#ifdef PHOTON_HAS_OIDN
+      pit = ro->params.find("denoise");
+      if (pit != ro->params.end() && pit->second.size() == sizeof(int32_t))
+        std::memcpy(&denoise, pit->second.data(), sizeof(int32_t));
+#endif
+    }
+  }
+
   // --- Rebuild scene and accel only when world has changed ---
   const bool scene_dirty = (m_world_commit_version != m_scene_version);
 
@@ -982,6 +1104,10 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
   pt.params.samples_per_pixel = spp;
   pt.params.max_depth = max_depth;
   pt.params.sample_offset = uint32_t(m_frameID);
+  pt.params.background_color = {bg_rgba[0], bg_rgba[1], bg_rgba[2]};
+  pt.params.background_alpha = bg_rgba[3];
+  pt.params.ambient_color = {ambient_color[0], ambient_color[1], ambient_color[2]};
+  pt.params.ambient_radiance = ambient_radiance;
   pt.camera = cam;
   pt.set_scene(*m_scene);
   pt.set_backend_ref(*m_backend);
@@ -1072,6 +1198,38 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
     m_channel_albedo[3 * idx + 1] = m_accumAlbedo[3 * idx + 1] * inv;
     m_channel_albedo[3 * idx + 2] = m_accumAlbedo[3 * idx + 2] * inv;
   }
+
+#ifdef PHOTON_HAS_OIDN
+  // --- Denoise the averaged result if requested ---
+  if (denoise) {
+    // Extract RGB from RGBA channel buffer (OIDN needs packed RGB)
+    m_denoise_rgb.resize(num_pixels * 3);
+    for (size_t idx = 0; idx < num_pixels; ++idx) {
+      m_denoise_rgb[3 * idx + 0] = m_channel_color[4 * idx + 0];
+      m_denoise_rgb[3 * idx + 1] = m_channel_color[4 * idx + 1];
+      m_denoise_rgb[3 * idx + 2] = m_channel_color[4 * idx + 2];
+    }
+
+    // Denoise in-place — albedo and normal are already packed RGB
+    m_denoiser.denoise_buffer(m_denoise_rgb.data(),
+                              m_channel_albedo.data(),
+                              m_channel_normal.data(),
+                              m_fb_w, m_fb_h);
+
+    // Write denoised RGB back to RGBA output
+    for (size_t idx = 0; idx < num_pixels; ++idx) {
+      out[4 * idx + 0] = m_denoise_rgb[3 * idx + 0];
+      out[4 * idx + 1] = m_denoise_rgb[3 * idx + 1];
+      out[4 * idx + 2] = m_denoise_rgb[3 * idx + 2];
+      out[4 * idx + 3] = 1.f;
+
+      m_channel_color[4 * idx + 0] = m_denoise_rgb[3 * idx + 0];
+      m_channel_color[4 * idx + 1] = m_denoise_rgb[3 * idx + 1];
+      m_channel_color[4 * idx + 2] = m_denoise_rgb[3 * idx + 2];
+      m_channel_color[4 * idx + 3] = 1.f;
+    }
+  }
+#endif
 }
 
 int PhotonDevice::frameReady(ANARIFrame, ANARIWaitMask) { return 1; }

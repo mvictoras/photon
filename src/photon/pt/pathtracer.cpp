@@ -42,6 +42,9 @@ RenderResult PathTracer::render() const
   const u32 spp = params.samples_per_pixel;
   const u32 max_depth = params.max_depth;
   const u32 sample_offset = params.sample_offset;
+  const Vec3 bg_color = params.background_color;
+  const Vec3 ambient_color = params.ambient_color;
+  const f32 ambient_radiance = params.ambient_radiance;
 
   RenderResult out;
   out.color = Kokkos::View<Vec3 **, Kokkos::LayoutRight>("pt_color", h, w);
@@ -178,13 +181,12 @@ RenderResult PathTracer::render() const
             HitResult hr = hits.hits(idx);
 
             if (!hr.hit) {
-              const Vec3 dir = rays.directions(idx);
-              Vec3 L{0.01f, 0.01f, 0.01f};
+              Vec3 L = bg_color;
 
               if (has_env_map) {
-                L = env_map_val.evaluate(dir);
-              } else if (light_count == 0) {
-                L = eval_sky_gradient(dir);
+                L = env_map_val.evaluate(rays.directions(idx));
+              } else if (ambient_radiance > 0.f) {
+                L = ambient_color * ambient_radiance;
               }
 
               accum(idx) = accum(idx) + throughput(idx) * L;
