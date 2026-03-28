@@ -35,7 +35,59 @@ static KOKKOS_FUNCTION Vec3 eval_sky_gradient(const Vec3 &dir)
   return (1.f - t) * Vec3{0.6f, 0.6f, 0.6f} + t * Vec3{1.f, 1.f, 1.f};
 }
 
-RenderResult PathTracer::render() const
+void PathTracer::ensure_views(u32 pixel_count, u32 w, u32 h)
+{
+  if (pixel_count == m_cached_pixel_count && w == m_cached_w && h == m_cached_h)
+    return;
+
+  m_cached_pixel_count = pixel_count;
+  m_cached_w = w;
+  m_cached_h = h;
+
+  // Output 2D views
+  m_out_color = Kokkos::View<Vec3 **, Kokkos::LayoutRight>("pt_color", h, w);
+  m_out_depth = Kokkos::View<f32 **, Kokkos::LayoutRight>("pt_depth", h, w);
+  m_out_normal = Kokkos::View<Vec3 **, Kokkos::LayoutRight>("pt_normal", h, w);
+  m_out_albedo = Kokkos::View<Vec3 **, Kokkos::LayoutRight>("pt_albedo", h, w);
+
+  // Accumulators
+  m_accum = Kokkos::View<Vec3 *>("pt_accum", pixel_count);
+  m_accum_sq = Kokkos::View<Vec3 *>("pt_accum_sq", pixel_count);
+  m_pixel_samples = Kokkos::View<u32 *>("pt_pixel_spp", pixel_count);
+
+  // AOVs
+  m_aov_albedo = Kokkos::View<Vec3 *>("pt_aov_albedo", pixel_count);
+  m_aov_normal = Kokkos::View<Vec3 *>("pt_aov_normal", pixel_count);
+  m_aov_depth = Kokkos::View<f32 *>("pt_aov_depth", pixel_count);
+  m_aov_written = Kokkos::View<u32 *>("pt_aov_written", pixel_count);
+
+  // Rays
+  m_ray_origins = Kokkos::View<Vec3 *>("pt_ray_o", pixel_count);
+  m_ray_dirs = Kokkos::View<Vec3 *>("pt_ray_d", pixel_count);
+  m_ray_tmin = Kokkos::View<f32 *>("pt_ray_tmin", pixel_count);
+  m_ray_tmax = Kokkos::View<f32 *>("pt_ray_tmax", pixel_count);
+
+  // Hits
+  m_hits = Kokkos::View<HitResult *>("pt_hits", pixel_count);
+
+  // Path state
+  m_throughput = Kokkos::View<Vec3 *>("pt_throughput", pixel_count);
+  m_active = Kokkos::View<u32 *>("pt_active", pixel_count);
+
+  // Shadow rays
+  m_shadow_origins = Kokkos::View<Vec3 *>("pt_shadow_o", pixel_count);
+  m_shadow_dirs = Kokkos::View<Vec3 *>("pt_shadow_d", pixel_count);
+  m_shadow_tmin = Kokkos::View<f32 *>("pt_shadow_tmin", pixel_count);
+  m_shadow_tmax = Kokkos::View<f32 *>("pt_shadow_tmax", pixel_count);
+
+  // NEE state
+  m_nee_contrib = Kokkos::View<Vec3 *>("pt_nee", pixel_count);
+  m_nee_active = Kokkos::View<u32 *>("pt_nee_active", pixel_count);
+  m_occluded = Kokkos::View<u32 *>("pt_occluded", pixel_count);
+  m_sample_start = Kokkos::View<Vec3 *>("pt_sample_start", pixel_count);
+}
+
+RenderResult PathTracer::render()
 {
   const u32 w = params.width;
   const u32 h = params.height;
@@ -46,11 +98,14 @@ RenderResult PathTracer::render() const
   const Vec3 ambient_color = params.ambient_color;
   const f32 ambient_radiance = params.ambient_radiance;
 
+  const u32 pixel_count = w * h;
+  ensure_views(pixel_count, w, h);
+
   RenderResult out;
-  out.color = Kokkos::View<Vec3 **, Kokkos::LayoutRight>("pt_color", h, w);
-  out.depth = Kokkos::View<f32 **, Kokkos::LayoutRight>("pt_depth", h, w);
-  out.normal = Kokkos::View<Vec3 **, Kokkos::LayoutRight>("pt_normal", h, w);
-  out.albedo = Kokkos::View<Vec3 **, Kokkos::LayoutRight>("pt_albedo", h, w);
+  out.color = m_out_color;
+  out.depth = m_out_depth;
+  out.normal = m_out_normal;
+  out.albedo = m_out_albedo;
 
   if (!m_backend) {
     Kokkos::deep_copy(out.color, Vec3{0.f, 0.f, 0.f});
@@ -63,50 +118,48 @@ RenderResult PathTracer::render() const
   const Scene scene = m_scene;
   const Camera cam = camera;
 
-  const u32 pixel_count = w * h;
-
-  Kokkos::View<Vec3 *> accum("pt_accum", pixel_count);
+  // Zero per-frame accumulators (cheap deep_copy, no allocation)
+  auto &accum = m_accum;
+  auto &accum_sq = m_accum_sq;
+  auto &pixel_samples = m_pixel_samples;
   Kokkos::deep_copy(accum, Vec3{0.f, 0.f, 0.f});
-
-  Kokkos::View<Vec3 *> accum_sq("pt_accum_sq", pixel_count);
   Kokkos::deep_copy(accum_sq, Vec3{0.f, 0.f, 0.f});
-  Kokkos::View<u32 *> pixel_samples("pt_pixel_spp", pixel_count);
   Kokkos::deep_copy(pixel_samples, 0u);
 
-  Kokkos::View<Vec3 *> aov_albedo("pt_aov_albedo", pixel_count);
-  Kokkos::View<Vec3 *> aov_normal("pt_aov_normal", pixel_count);
-  Kokkos::View<f32 *> aov_depth("pt_aov_depth", pixel_count);
-  Kokkos::View<u32 *> aov_written("pt_aov_written", pixel_count);
+  auto &aov_albedo = m_aov_albedo;
+  auto &aov_normal = m_aov_normal;
+  auto &aov_depth = m_aov_depth;
+  auto &aov_written = m_aov_written;
   Kokkos::deep_copy(aov_albedo, Vec3{0.f, 0.f, 0.f});
   Kokkos::deep_copy(aov_normal, Vec3{0.f, 0.f, 0.f});
   Kokkos::deep_copy(aov_depth, 0.f);
   Kokkos::deep_copy(aov_written, 0u);
 
   RayBatch rays;
-  rays.origins = Kokkos::View<Vec3 *>("pt_ray_o", pixel_count);
-  rays.directions = Kokkos::View<Vec3 *>("pt_ray_d", pixel_count);
-  rays.tmin = Kokkos::View<f32 *>("pt_ray_tmin", pixel_count);
-  rays.tmax = Kokkos::View<f32 *>("pt_ray_tmax", pixel_count);
+  rays.origins = m_ray_origins;
+  rays.directions = m_ray_dirs;
+  rays.tmin = m_ray_tmin;
+  rays.tmax = m_ray_tmax;
   rays.count = pixel_count;
 
   HitBatch hits;
-  hits.hits = Kokkos::View<HitResult *>("pt_hits", pixel_count);
+  hits.hits = m_hits;
   hits.count = pixel_count;
 
-  Kokkos::View<Vec3 *> throughput("pt_throughput", pixel_count);
-  Kokkos::View<u32 *> active("pt_active", pixel_count);
+  auto &throughput = m_throughput;
+  auto &active = m_active;
 
   RayBatch shadow_rays;
-  shadow_rays.origins = Kokkos::View<Vec3 *>("pt_shadow_o", pixel_count);
-  shadow_rays.directions = Kokkos::View<Vec3 *>("pt_shadow_d", pixel_count);
-  shadow_rays.tmin = Kokkos::View<f32 *>("pt_shadow_tmin", pixel_count);
-  shadow_rays.tmax = Kokkos::View<f32 *>("pt_shadow_tmax", pixel_count);
+  shadow_rays.origins = m_shadow_origins;
+  shadow_rays.directions = m_shadow_dirs;
+  shadow_rays.tmin = m_shadow_tmin;
+  shadow_rays.tmax = m_shadow_tmax;
   shadow_rays.count = pixel_count;
 
-  Kokkos::View<Vec3 *> nee_contrib("pt_nee", pixel_count);
-  Kokkos::View<u32 *> nee_active("pt_nee_active", pixel_count);
-  Kokkos::View<u32 *> occluded("pt_occluded", pixel_count);
-  Kokkos::View<Vec3 *> sample_start("pt_sample_start", pixel_count);
+  auto &nee_contrib = m_nee_contrib;
+  auto &nee_active = m_nee_active;
+  auto &occluded = m_occluded;
+  auto &sample_start = m_sample_start;
 
   const f32 adaptive_threshold = 0.01f;
   const u32 adaptive_min_samples = 16u;

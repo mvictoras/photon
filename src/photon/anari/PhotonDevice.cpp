@@ -1098,105 +1098,146 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
   // --- Render with cached backend + scene ---
   auto t0 = std::chrono::steady_clock::now();
 
-  photon::pt::PathTracer pt;
-  pt.params.width = m_fb_w;
-  pt.params.height = m_fb_h;
-  pt.params.samples_per_pixel = spp;
-  pt.params.max_depth = max_depth;
-  pt.params.sample_offset = uint32_t(m_frameID);
-  pt.params.background_color = {bg_rgba[0], bg_rgba[1], bg_rgba[2]};
-  pt.params.background_alpha = bg_rgba[3];
-  pt.params.ambient_color = {ambient_color[0], ambient_color[1], ambient_color[2]};
-  pt.params.ambient_radiance = ambient_radiance;
-  pt.camera = cam;
-  pt.set_scene(*m_scene);
-  pt.set_backend_ref(*m_backend);
+  m_pathtracer.params.width = m_fb_w;
+  m_pathtracer.params.height = m_fb_h;
+  m_pathtracer.params.samples_per_pixel = spp;
+  m_pathtracer.params.max_depth = max_depth;
+  m_pathtracer.params.sample_offset = uint32_t(m_frameID);
+  m_pathtracer.params.background_color = {bg_rgba[0], bg_rgba[1], bg_rgba[2]};
+  m_pathtracer.params.background_alpha = bg_rgba[3];
+  m_pathtracer.params.ambient_color = {ambient_color[0], ambient_color[1], ambient_color[2]};
+  m_pathtracer.params.ambient_radiance = ambient_radiance;
+  m_pathtracer.camera = cam;
+  m_pathtracer.set_scene(*m_scene);
+  m_pathtracer.set_backend_ref(*m_backend);
 
-  auto result = pt.render();
+  auto result = m_pathtracer.render();
 
   auto t1 = std::chrono::steady_clock::now();
   m_lastDuration = std::chrono::duration<float>(t1 - t0).count();
 
-  auto color_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.color);
-  auto depth_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.depth);
-  auto normal_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.normal);
-  auto albedo_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.albedo);
+  const uint32_t h_fb = m_fb_h;
+  const uint32_t w_fb = m_fb_w;
+  const size_t num_pixels = size_t(w_fb) * size_t(h_fb);
 
-  const size_t num_pixels = size_t(m_fb_w) * size_t(m_fb_h);
+  // Ensure GPU accumulation views are allocated (check actual view dimensions)
+  if (m_gpu_accumColor.extent(0) != h_fb
+      || m_gpu_accumColor.extent(1) != w_fb) {
+    m_gpu_accumColor = Kokkos::View<photon::pt::Vec3 **,
+                       Kokkos::LayoutRight>("gpu_accum_color", h_fb, w_fb);
+    m_gpu_accumDepth = Kokkos::View<photon::pt::f32 **,
+                       Kokkos::LayoutRight>("gpu_accum_depth", h_fb, w_fb);
+    m_gpu_accumNormal = Kokkos::View<photon::pt::Vec3 **,
+                       Kokkos::LayoutRight>("gpu_accum_normal", h_fb, w_fb);
+    m_gpu_accumAlbedo = Kokkos::View<photon::pt::Vec3 **,
+                       Kokkos::LayoutRight>("gpu_accum_albedo", h_fb, w_fb);
+    m_gpu_avgColor = Kokkos::View<photon::pt::Vec3 **,
+                       Kokkos::LayoutRight>("gpu_avg_color", h_fb, w_fb);
+    m_gpu_avgDepth = Kokkos::View<photon::pt::f32 **,
+                       Kokkos::LayoutRight>("gpu_avg_depth", h_fb, w_fb);
+    m_gpu_avgNormal = Kokkos::View<photon::pt::Vec3 **,
+                       Kokkos::LayoutRight>("gpu_avg_normal", h_fb, w_fb);
+    m_gpu_avgAlbedo = Kokkos::View<photon::pt::Vec3 **,
+                       Kokkos::LayoutRight>("gpu_avg_albedo", h_fb, w_fb);
+  }
 
-  // Resize accumulation and output buffers
-  m_accumColor.resize(num_pixels * 4, 0.f);
-  m_accumDepth.resize(num_pixels, 0.f);
-  m_accumNormal.resize(num_pixels * 3, 0.f);
-  m_accumAlbedo.resize(num_pixels * 3, 0.f);
+  // If accumulation was reset, clear GPU buffers
+  if (m_frameID == 0) {
+    Kokkos::deep_copy(m_gpu_accumColor, photon::pt::Vec3{0.f, 0.f, 0.f});
+    Kokkos::deep_copy(m_gpu_accumDepth, 0.f);
+    Kokkos::deep_copy(m_gpu_accumNormal, photon::pt::Vec3{0.f, 0.f, 0.f});
+    Kokkos::deep_copy(m_gpu_accumAlbedo, photon::pt::Vec3{0.f, 0.f, 0.f});
+  }
 
+  // GPU accumulation: add this frame's result (with Y-flip) directly on GPU
+  auto gpu_ac = m_gpu_accumColor;
+  auto gpu_ad = m_gpu_accumDepth;
+  auto gpu_an = m_gpu_accumNormal;
+  auto gpu_aa = m_gpu_accumAlbedo;
+  auto rc = result.color;
+  auto rd = result.depth;
+  auto rn = result.normal;
+  auto ra = result.albedo;
+
+  Kokkos::parallel_for(
+      "gpu_accumulate",
+      Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {int(h_fb), int(w_fb)}),
+      KOKKOS_LAMBDA(const int y, const int x) {
+        const int src_y = int(h_fb) - 1 - y;
+        gpu_ac(y, x) = gpu_ac(y, x) + rc(src_y, x);
+        gpu_ad(y, x) = gpu_ad(y, x) + rd(src_y, x);
+        gpu_an(y, x) = gpu_an(y, x) + rn(src_y, x);
+        gpu_aa(y, x) = gpu_aa(y, x) + ra(src_y, x);
+      });
+
+  m_frameID += spp;
+
+  // GPU averaging: compute averaged result in separate views
+  const float inv = 1.f / float(m_frameID);
+  auto gpu_oc = m_gpu_avgColor;
+  auto gpu_od = m_gpu_avgDepth;
+  auto gpu_on = m_gpu_avgNormal;
+  auto gpu_oa = m_gpu_avgAlbedo;
+
+  Kokkos::parallel_for(
+      "gpu_average",
+      Kokkos::MDRangePolicy<Kokkos::Rank<2>>({0, 0}, {int(h_fb), int(w_fb)}),
+      KOKKOS_LAMBDA(const int y, const int x) {
+        auto c = gpu_ac(y, x) * inv;
+        // clamp to [0, 1]
+        c.x = c.x < 0.f ? 0.f : (c.x > 1.f ? 1.f : c.x);
+        c.y = c.y < 0.f ? 0.f : (c.y > 1.f ? 1.f : c.y);
+        c.z = c.z < 0.f ? 0.f : (c.z > 1.f ? 1.f : c.z);
+        gpu_oc(y, x) = c;
+        gpu_od(y, x) = gpu_ad(y, x) * inv;
+        gpu_on(y, x) = gpu_an(y, x) * inv;
+        gpu_oa(y, x) = gpu_aa(y, x) * inv;
+      });
+
+  // Single GPU→CPU copy of averaged results
+  auto avg_color_host = Kokkos::create_mirror_view_and_copy(
+      Kokkos::HostSpace{}, m_gpu_avgColor);
+  auto avg_depth_host = Kokkos::create_mirror_view_and_copy(
+      Kokkos::HostSpace{}, m_gpu_avgDepth);
+  auto avg_normal_host = Kokkos::create_mirror_view_and_copy(
+      Kokkos::HostSpace{}, m_gpu_avgNormal);
+  auto avg_albedo_host = Kokkos::create_mirror_view_and_copy(
+      Kokkos::HostSpace{}, m_gpu_avgAlbedo);
+
+  // Resize CPU output buffers
   m_channel_color.resize(num_pixels * 4);
   m_channel_depth.resize(num_pixels);
   m_channel_normal.resize(num_pixels * 3);
   m_channel_albedo.resize(num_pixels * 3);
 
-  // If accumulation was reset, clear the buffers
-  if (m_frameID == 0) {
-    std::fill(m_accumColor.begin(), m_accumColor.end(), 0.f);
-    std::fill(m_accumDepth.begin(), m_accumDepth.end(), 0.f);
-    std::fill(m_accumNormal.begin(), m_accumNormal.end(), 0.f);
-    std::fill(m_accumAlbedo.begin(), m_accumAlbedo.end(), 0.f);
-  }
+  // Write to CPU output buffers
+  for (uint32_t y = 0; y < h_fb; ++y) {
+    for (uint32_t x = 0; x < w_fb; ++x) {
+      const size_t idx = size_t(y) * size_t(w_fb) + x;
 
-  // Add this frame's contribution to the accumulation buffers
-  for (uint32_t y = 0; y < m_fb_h; ++y) {
-    for (uint32_t x = 0; x < m_fb_w; ++x) {
-      const size_t idx = size_t(y) * size_t(m_fb_w) + x;
-      const uint32_t src_y = m_fb_h - 1 - y;
+      const auto c = avg_color_host(y, x);
+      out[4 * idx + 0] = c.x;
+      out[4 * idx + 1] = c.y;
+      out[4 * idx + 2] = c.z;
+      out[4 * idx + 3] = 1.f;
 
-      const auto c = color_host(src_y, x);
-      m_accumColor[4 * idx + 0] += c.x;
-      m_accumColor[4 * idx + 1] += c.y;
-      m_accumColor[4 * idx + 2] += c.z;
-      m_accumColor[4 * idx + 3] += 1.f;
+      m_channel_color[4 * idx + 0] = c.x;
+      m_channel_color[4 * idx + 1] = c.y;
+      m_channel_color[4 * idx + 2] = c.z;
+      m_channel_color[4 * idx + 3] = 1.f;
 
-      m_accumDepth[idx] += depth_host(src_y, x);
+      m_channel_depth[idx] = avg_depth_host(y, x);
 
-      const auto n = normal_host(src_y, x);
-      m_accumNormal[3 * idx + 0] += n.x;
-      m_accumNormal[3 * idx + 1] += n.y;
-      m_accumNormal[3 * idx + 2] += n.z;
+      const auto n = avg_normal_host(y, x);
+      m_channel_normal[3 * idx + 0] = n.x;
+      m_channel_normal[3 * idx + 1] = n.y;
+      m_channel_normal[3 * idx + 2] = n.z;
 
-      const auto a = albedo_host(src_y, x);
-      m_accumAlbedo[3 * idx + 0] += a.x;
-      m_accumAlbedo[3 * idx + 1] += a.y;
-      m_accumAlbedo[3 * idx + 2] += a.z;
+      const auto a = avg_albedo_host(y, x);
+      m_channel_albedo[3 * idx + 0] = a.x;
+      m_channel_albedo[3 * idx + 1] = a.y;
+      m_channel_albedo[3 * idx + 2] = a.z;
     }
-  }
-
-  m_frameID += spp;
-
-  // Write averaged result to output buffers
-  const float inv = 1.f / float(m_frameID);
-  for (size_t idx = 0; idx < num_pixels; ++idx) {
-    const auto cr = photon::pt::clamp01({
-        m_accumColor[4 * idx + 0] * inv,
-        m_accumColor[4 * idx + 1] * inv,
-        m_accumColor[4 * idx + 2] * inv});
-    out[4 * idx + 0] = cr.x;
-    out[4 * idx + 1] = cr.y;
-    out[4 * idx + 2] = cr.z;
-    out[4 * idx + 3] = 1.f;
-
-    m_channel_color[4 * idx + 0] = cr.x;
-    m_channel_color[4 * idx + 1] = cr.y;
-    m_channel_color[4 * idx + 2] = cr.z;
-    m_channel_color[4 * idx + 3] = 1.f;
-
-    m_channel_depth[idx] = m_accumDepth[idx] * inv;
-
-    m_channel_normal[3 * idx + 0] = m_accumNormal[3 * idx + 0] * inv;
-    m_channel_normal[3 * idx + 1] = m_accumNormal[3 * idx + 1] * inv;
-    m_channel_normal[3 * idx + 2] = m_accumNormal[3 * idx + 2] * inv;
-
-    m_channel_albedo[3 * idx + 0] = m_accumAlbedo[3 * idx + 0] * inv;
-    m_channel_albedo[3 * idx + 1] = m_accumAlbedo[3 * idx + 1] * inv;
-    m_channel_albedo[3 * idx + 2] = m_accumAlbedo[3 * idx + 2] * inv;
   }
 
 #ifdef PHOTON_HAS_OIDN
