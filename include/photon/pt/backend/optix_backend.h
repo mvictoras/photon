@@ -45,6 +45,8 @@ private:
   void *m_d_occluded{nullptr};
   size_t m_staging_capacity{0};  // number of rays the buffers can hold
 
+  cudaStream_t m_stream{nullptr};
+
   void create_pipeline();
   void free_device_mesh_buffers();
   void ensure_staging_buffers(u32 count);
