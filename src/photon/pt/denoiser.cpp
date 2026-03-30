@@ -45,13 +45,30 @@ void Denoiser::ensure_setup(u32 width, u32 height) {
 
   m_width = width;
   m_height = height;
-  m_output.resize(size_t(width) * height * 3);
+
+  const size_t buf_bytes = size_t(width) * height * 3 * sizeof(float);
+
+  // Allocate device-accessible buffers (works for both CPU and GPU devices)
+  m_buf_color  = m_device.newBuffer(buf_bytes);
+  m_buf_albedo = m_device.newBuffer(buf_bytes);
+  m_buf_normal = m_device.newBuffer(buf_bytes);
+  m_buf_output = m_device.newBuffer(buf_bytes);
 
   m_filter = m_device.newFilter("RT");
   m_filter.set("hdr", true);
   m_filter.set("cleanAux", true);
-  // Image pointers are set per-call in denoise_buffer() since the
-  // caller's buffer addresses may change between frames.
+
+  m_filter.setImage("color",  m_buf_color,  oidn::Format::Float3, width, height);
+  m_filter.setImage("albedo", m_buf_albedo, oidn::Format::Float3, width, height);
+  m_filter.setImage("normal", m_buf_normal, oidn::Format::Float3, width, height);
+  m_filter.setImage("output", m_buf_output, oidn::Format::Float3, width, height);
+  m_filter.commit();
+
+  const char *err = nullptr;
+  if (m_device.getError(err) != oidn::Error::None) {
+    std::fprintf(stderr, "OIDN filter setup error: %s\n",
+                 err ? err : "unknown");
+  }
 }
 #endif
 
@@ -63,38 +80,23 @@ void Denoiser::denoise_buffer(float *color, const float *albedo,
 
   ensure_setup(width, height);
 
-  const size_t pixel_stride = 3 * sizeof(float);
-  const size_t row_stride = size_t(width) * pixel_stride;
+  const size_t buf_bytes = size_t(width) * height * 3 * sizeof(float);
 
-  m_filter.setImage("color", color, oidn::Format::Float3,
-                     width, height, 0, pixel_stride, row_stride);
-  m_filter.setImage("albedo", const_cast<float *>(albedo),
-                     oidn::Format::Float3,
-                     width, height, 0, pixel_stride, row_stride);
-  m_filter.setImage("normal", const_cast<float *>(normal),
-                     oidn::Format::Float3,
-                     width, height, 0, pixel_stride, row_stride);
-  m_filter.setImage("output", m_output.data(), oidn::Format::Float3,
-                     width, height);
-  m_filter.commit();
-
-  const char *err = nullptr;
-  if (m_device.getError(err) != oidn::Error::None) {
-    std::fprintf(stderr, "OIDN filter setup error: %s\n",
-                 err ? err : "unknown");
-    return;
-  }
+  // Upload host data to device-accessible buffers
+  m_buf_color.write(0, buf_bytes, color);
+  m_buf_albedo.write(0, buf_bytes, albedo);
+  m_buf_normal.write(0, buf_bytes, normal);
 
   m_filter.execute();
 
+  const char *err = nullptr;
   if (m_device.getError(err) != oidn::Error::None) {
     std::fprintf(stderr, "OIDN execute error: %s\n", err ? err : "unknown");
     return;
   }
 
-  // Copy denoised output back to color buffer
-  std::memcpy(color, m_output.data(),
-              size_t(width) * height * 3 * sizeof(float));
+  // Read denoised output back to host
+  m_buf_output.read(0, buf_bytes, color);
 #else
   (void)color; (void)albedo; (void)normal; (void)width; (void)height;
 #endif

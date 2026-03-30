@@ -34,7 +34,10 @@ private:
 #ifdef PHOTON_HAS_OIDN
   oidn::DeviceRef m_device;
   oidn::FilterRef m_filter;
-  std::vector<float> m_output;
+  oidn::BufferRef m_buf_color;
+  oidn::BufferRef m_buf_albedo;
+  oidn::BufferRef m_buf_normal;
+  oidn::BufferRef m_buf_output;
   u32 m_width{0};
   u32 m_height{0};
   bool m_ready{false};
