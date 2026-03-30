@@ -108,6 +108,7 @@ static void cuda_download(void *host_ptr, const void *dev_ptr, size_t bytes)
 OptixBackend::OptixBackend()
 {
   check_cuda(cudaFree(nullptr), "init cuda");
+  check_cuda(cudaStreamCreate(&m_stream), "streamCreate");
   CUcontext cu_ctx = 0;
   OptixDeviceContextOptions options{};
   options.logCallbackFunction = optix_log_callback;
@@ -161,6 +162,7 @@ OptixBackend::~OptixBackend()
   if (m_gas_buffer) cudaFree(reinterpret_cast<void *>(m_gas_buffer));
   if (m_d_params) cudaFree(reinterpret_cast<void *>(m_d_params));
   if (m_context) optixDeviceContextDestroy(m_context);
+  if (m_stream) cudaStreamDestroy(m_stream);
 }
 
 extern const char photon_optix_ptx[];
@@ -404,8 +406,8 @@ void OptixBackend::trace_closest(const RayBatch &rays, HitBatch &hits)
   params.mode = 0;
 
   check_cuda(cudaMemcpy(reinterpret_cast<void *>(m_d_params), &params, sizeof(Params), cudaMemcpyHostToDevice), "params cp");
-  check_optix(optixLaunch(m_pipeline, 0, m_d_params, sizeof(Params), &m_sbt, n, 1, 1), "launch closest");
-  check_cuda(cudaDeviceSynchronize(), "sync closest");
+  check_optix(optixLaunch(m_pipeline, m_stream, m_d_params, sizeof(Params), &m_sbt, n, 1, 1), "launch closest");
+  check_cuda(cudaStreamSynchronize(m_stream), "sync closest");
 
   if (needs_staging) {
     check_cuda(cudaMemcpy(hits.hits.data(), m_d_hit_results, n * sizeof(HitResult), cudaMemcpyDeviceToHost), "download hits");
@@ -436,8 +438,8 @@ void OptixBackend::trace_occluded(const RayBatch &rays, Kokkos::View<u32 *> occl
   params.mode = 1;
 
   check_cuda(cudaMemcpy(reinterpret_cast<void *>(m_d_params), &params, sizeof(Params), cudaMemcpyHostToDevice), "params cp");
-  check_optix(optixLaunch(m_pipeline, 0, m_d_params, sizeof(Params), &m_sbt, n, 1, 1), "launch occluded");
-  check_cuda(cudaDeviceSynchronize(), "sync occluded");
+  check_optix(optixLaunch(m_pipeline, m_stream, m_d_params, sizeof(Params), &m_sbt, n, 1, 1), "launch occluded");
+  check_cuda(cudaStreamSynchronize(m_stream), "sync occluded");
 
   if (needs_staging) {
     check_cuda(cudaMemcpy(occluded.data(), m_d_occluded, n * sizeof(u32), cudaMemcpyDeviceToHost), "download occluded");

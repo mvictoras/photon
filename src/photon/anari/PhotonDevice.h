@@ -151,6 +151,10 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
     uint32_t m_accum_fb_w{0}, m_accum_fb_h{0}; // resolution when accum started
     photon::pt::Camera m_prev_camera{};  // camera from previous frame
 
+    // Lazy GPU→CPU copy: deferred until frameBufferMap
+    bool m_gpu_dirty{false};
+    bool m_denoise_active{false};        // cached denoise flag for deferred flush
+
     // Denoiser (persistent across frames)
 #ifdef PHOTON_HAS_OIDN
     photon::pt::Denoiser m_denoiser;

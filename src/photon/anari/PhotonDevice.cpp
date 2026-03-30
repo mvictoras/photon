@@ -906,6 +906,81 @@ const void *PhotonDevice::frameBufferMap(ANARIFrame fb, const char *channel, uin
   if (h)
     *h = m_fb_h;
 
+  // Flush GPU→CPU copy if renderFrame marked buffers as dirty
+  if (m_gpu_dirty && m_gpu_avgColor.extent(0) > 0) {
+    const uint32_t h_fb = m_fb_h;
+    const uint32_t w_fb = m_fb_w;
+    const size_t num_pixels = size_t(w_fb) * size_t(h_fb);
+
+    auto avg_color_host  = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, m_gpu_avgColor);
+    auto avg_depth_host  = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, m_gpu_avgDepth);
+    auto avg_normal_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, m_gpu_avgNormal);
+    auto avg_albedo_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, m_gpu_avgAlbedo);
+
+    m_fb_bytes.resize(num_pixels * 4 * sizeof(float));
+    m_channel_color.resize(num_pixels * 4);
+    m_channel_depth.resize(num_pixels);
+    m_channel_normal.resize(num_pixels * 3);
+    m_channel_albedo.resize(num_pixels * 3);
+
+    auto *out = reinterpret_cast<float *>(m_fb_bytes.data());
+
+    for (uint32_t y = 0; y < h_fb; ++y) {
+      for (uint32_t x = 0; x < w_fb; ++x) {
+        const size_t idx = size_t(y) * size_t(w_fb) + x;
+
+        const auto c = avg_color_host(y, x);
+        out[4 * idx + 0] = c.x;
+        out[4 * idx + 1] = c.y;
+        out[4 * idx + 2] = c.z;
+        out[4 * idx + 3] = 1.f;
+
+        m_channel_color[4 * idx + 0] = c.x;
+        m_channel_color[4 * idx + 1] = c.y;
+        m_channel_color[4 * idx + 2] = c.z;
+        m_channel_color[4 * idx + 3] = 1.f;
+
+        m_channel_depth[idx] = avg_depth_host(y, x);
+
+        const auto n = avg_normal_host(y, x);
+        m_channel_normal[3 * idx + 0] = n.x;
+        m_channel_normal[3 * idx + 1] = n.y;
+        m_channel_normal[3 * idx + 2] = n.z;
+
+        const auto a = avg_albedo_host(y, x);
+        m_channel_albedo[3 * idx + 0] = a.x;
+        m_channel_albedo[3 * idx + 1] = a.y;
+        m_channel_albedo[3 * idx + 2] = a.z;
+      }
+    }
+
+#ifdef PHOTON_HAS_OIDN
+    if (m_denoise_active) {
+      m_denoise_rgb.resize(num_pixels * 3);
+      for (size_t idx = 0; idx < num_pixels; ++idx) {
+        m_denoise_rgb[3 * idx + 0] = m_channel_color[4 * idx + 0];
+        m_denoise_rgb[3 * idx + 1] = m_channel_color[4 * idx + 1];
+        m_denoise_rgb[3 * idx + 2] = m_channel_color[4 * idx + 2];
+      }
+      m_denoiser.denoise_buffer(m_denoise_rgb.data(),
+                                m_channel_albedo.data(),
+                                m_channel_normal.data(),
+                                m_fb_w, m_fb_h);
+      for (size_t idx = 0; idx < num_pixels; ++idx) {
+        out[4 * idx + 0] = m_denoise_rgb[3 * idx + 0];
+        out[4 * idx + 1] = m_denoise_rgb[3 * idx + 1];
+        out[4 * idx + 2] = m_denoise_rgb[3 * idx + 2];
+        out[4 * idx + 3] = 1.f;
+        m_channel_color[4 * idx + 0] = m_denoise_rgb[3 * idx + 0];
+        m_channel_color[4 * idx + 1] = m_denoise_rgb[3 * idx + 1];
+        m_channel_color[4 * idx + 2] = m_denoise_rgb[3 * idx + 2];
+        m_channel_color[4 * idx + 3] = 1.f;
+      }
+    }
+#endif
+    m_gpu_dirty = false;
+  }
+
   const char *chan = channel ? channel : "channel.color";
 
   if (std::strcmp(chan, "color") == 0 || std::strcmp(chan, "channel.color") == 0) {
@@ -956,9 +1031,6 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
 
   m_fb_w = size[0];
   m_fb_h = size[1];
-  m_fb_bytes.resize(size_t(m_fb_w) * size_t(m_fb_h) * 4 * sizeof(float));
-
-  auto *out = reinterpret_cast<float *>(m_fb_bytes.data());
 
   uintptr_t world_h = 0;
   auto wit = o->params.find("world");
@@ -1118,7 +1190,6 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
 
   const uint32_t h_fb = m_fb_h;
   const uint32_t w_fb = m_fb_w;
-  const size_t num_pixels = size_t(w_fb) * size_t(h_fb);
 
   // Ensure GPU accumulation views are allocated (check actual view dimensions)
   if (m_gpu_accumColor.extent(0) != h_fb
@@ -1194,83 +1265,13 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
         gpu_oa(y, x) = gpu_aa(y, x) * inv;
       });
 
-  // Single GPU→CPU copy of averaged results
-  auto avg_color_host = Kokkos::create_mirror_view_and_copy(
-      Kokkos::HostSpace{}, m_gpu_avgColor);
-  auto avg_depth_host = Kokkos::create_mirror_view_and_copy(
-      Kokkos::HostSpace{}, m_gpu_avgDepth);
-  auto avg_normal_host = Kokkos::create_mirror_view_and_copy(
-      Kokkos::HostSpace{}, m_gpu_avgNormal);
-  auto avg_albedo_host = Kokkos::create_mirror_view_and_copy(
-      Kokkos::HostSpace{}, m_gpu_avgAlbedo);
-
-  // Resize CPU output buffers
-  m_channel_color.resize(num_pixels * 4);
-  m_channel_depth.resize(num_pixels);
-  m_channel_normal.resize(num_pixels * 3);
-  m_channel_albedo.resize(num_pixels * 3);
-
-  // Write to CPU output buffers
-  for (uint32_t y = 0; y < h_fb; ++y) {
-    for (uint32_t x = 0; x < w_fb; ++x) {
-      const size_t idx = size_t(y) * size_t(w_fb) + x;
-
-      const auto c = avg_color_host(y, x);
-      out[4 * idx + 0] = c.x;
-      out[4 * idx + 1] = c.y;
-      out[4 * idx + 2] = c.z;
-      out[4 * idx + 3] = 1.f;
-
-      m_channel_color[4 * idx + 0] = c.x;
-      m_channel_color[4 * idx + 1] = c.y;
-      m_channel_color[4 * idx + 2] = c.z;
-      m_channel_color[4 * idx + 3] = 1.f;
-
-      m_channel_depth[idx] = avg_depth_host(y, x);
-
-      const auto n = avg_normal_host(y, x);
-      m_channel_normal[3 * idx + 0] = n.x;
-      m_channel_normal[3 * idx + 1] = n.y;
-      m_channel_normal[3 * idx + 2] = n.z;
-
-      const auto a = avg_albedo_host(y, x);
-      m_channel_albedo[3 * idx + 0] = a.x;
-      m_channel_albedo[3 * idx + 1] = a.y;
-      m_channel_albedo[3 * idx + 2] = a.z;
-    }
-  }
-
+  // Mark GPU buffers as dirty — actual copy deferred to frameBufferMap
 #ifdef PHOTON_HAS_OIDN
-  // --- Denoise the averaged result if requested ---
-  if (denoise) {
-    // Extract RGB from RGBA channel buffer (OIDN needs packed RGB)
-    m_denoise_rgb.resize(num_pixels * 3);
-    for (size_t idx = 0; idx < num_pixels; ++idx) {
-      m_denoise_rgb[3 * idx + 0] = m_channel_color[4 * idx + 0];
-      m_denoise_rgb[3 * idx + 1] = m_channel_color[4 * idx + 1];
-      m_denoise_rgb[3 * idx + 2] = m_channel_color[4 * idx + 2];
-    }
-
-    // Denoise in-place — albedo and normal are already packed RGB
-    m_denoiser.denoise_buffer(m_denoise_rgb.data(),
-                              m_channel_albedo.data(),
-                              m_channel_normal.data(),
-                              m_fb_w, m_fb_h);
-
-    // Write denoised RGB back to RGBA output
-    for (size_t idx = 0; idx < num_pixels; ++idx) {
-      out[4 * idx + 0] = m_denoise_rgb[3 * idx + 0];
-      out[4 * idx + 1] = m_denoise_rgb[3 * idx + 1];
-      out[4 * idx + 2] = m_denoise_rgb[3 * idx + 2];
-      out[4 * idx + 3] = 1.f;
-
-      m_channel_color[4 * idx + 0] = m_denoise_rgb[3 * idx + 0];
-      m_channel_color[4 * idx + 1] = m_denoise_rgb[3 * idx + 1];
-      m_channel_color[4 * idx + 2] = m_denoise_rgb[3 * idx + 2];
-      m_channel_color[4 * idx + 3] = 1.f;
-    }
-  }
+  m_denoise_active = (denoise != 0);
+#else
+  m_denoise_active = false;
 #endif
+  m_gpu_dirty = true;
 }
 
 int PhotonDevice::frameReady(ANARIFrame, ANARIWaitMask) { return 1; }

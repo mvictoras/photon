@@ -85,6 +85,7 @@ void PathTracer::ensure_views(u32 pixel_count, u32 w, u32 h)
   m_nee_active = Kokkos::View<u32 *>("pt_nee_active", pixel_count);
   m_occluded = Kokkos::View<u32 *>("pt_occluded", pixel_count);
   m_sample_start = Kokkos::View<Vec3 *>("pt_sample_start", pixel_count);
+  m_nee_count = Kokkos::View<u32>("pt_nee_count");
 }
 
 RenderResult PathTracer::render()
@@ -118,22 +119,14 @@ RenderResult PathTracer::render()
   const Scene scene = m_scene;
   const Camera cam = camera;
 
-  // Zero per-frame accumulators (cheap deep_copy, no allocation)
   auto &accum = m_accum;
   auto &accum_sq = m_accum_sq;
   auto &pixel_samples = m_pixel_samples;
-  Kokkos::deep_copy(accum, Vec3{0.f, 0.f, 0.f});
-  Kokkos::deep_copy(accum_sq, Vec3{0.f, 0.f, 0.f});
-  Kokkos::deep_copy(pixel_samples, 0u);
 
   auto &aov_albedo = m_aov_albedo;
   auto &aov_normal = m_aov_normal;
   auto &aov_depth = m_aov_depth;
   auto &aov_written = m_aov_written;
-  Kokkos::deep_copy(aov_albedo, Vec3{0.f, 0.f, 0.f});
-  Kokkos::deep_copy(aov_normal, Vec3{0.f, 0.f, 0.f});
-  Kokkos::deep_copy(aov_depth, 0.f);
-  Kokkos::deep_copy(aov_written, 0u);
 
   RayBatch rays;
   rays.origins = m_ray_origins;
@@ -172,6 +165,17 @@ RenderResult PathTracer::render()
           const u32 x = u32(idx) % w;
           const u32 y = u32(idx) / w;
 
+          // Zero per-frame accumulators on first sample (replaces Kokkos::deep_copy)
+          if (s == 0u) {
+            accum(idx) = Vec3{0.f, 0.f, 0.f};
+            accum_sq(idx) = Vec3{0.f, 0.f, 0.f};
+            pixel_samples(idx) = 0u;
+            aov_albedo(idx) = Vec3{0.f, 0.f, 0.f};
+            aov_normal(idx) = Vec3{0.f, 0.f, 0.f};
+            aov_depth(idx) = 0.f;
+            aov_written(idx) = 0u;
+          }
+
           if (s >= adaptive_min_samples) {
             const u32 ns = pixel_samples(idx);
             if (ns >= adaptive_min_samples) {
@@ -206,8 +210,9 @@ RenderResult PathTracer::render()
     for (u32 bounce = 0; bounce < max_depth; ++bounce) {
       m_backend->trace_closest(rays, hits);
 
-      Kokkos::deep_copy(nee_contrib, Vec3{0.f, 0.f, 0.f});
-      Kokkos::deep_copy(nee_active, 0u);
+      // Zero NEE ray counter before shade kernel
+      Kokkos::deep_copy(m_nee_count, 0u);
+      auto &nee_count = m_nee_count;
 
       const auto materials = scene.materials;
       const auto lights = scene.lights;
@@ -228,6 +233,10 @@ RenderResult PathTracer::render()
           "pt_shade",
           Kokkos::RangePolicy<>(0, int(pixel_count)),
           KOKKOS_LAMBDA(const int idx) {
+            // Zero per-bounce NEE state unconditionally (replaces Kokkos::deep_copy)
+            nee_contrib(idx) = Vec3{0.f, 0.f, 0.f};
+            nee_active(idx) = 0u;
+
             if (active(idx) == 0u)
               return;
 
@@ -337,6 +346,7 @@ RenderResult PathTracer::render()
 
                   nee_contrib(idx) = nee;
                   nee_active(idx) = 1u;
+                  Kokkos::atomic_add(&nee_count(), 1u);
 
                   shadow_rays.origins(idx) = p;
                   shadow_rays.directions(idx) = ls.wi;
@@ -391,6 +401,7 @@ RenderResult PathTracer::render()
                   const Vec3 nee_e = throughput(idx) * f_e * Le * (w_mis_e * inv_pick / pdf_solid);
                   nee_contrib(idx) = nee_e;
                   nee_active(idx) = 1u;
+                  Kokkos::atomic_add(&nee_count(), 1u);
                   shadow_rays.origins(idx) = p;
                   shadow_rays.directions(idx) = wi;
                   shadow_rays.tmin(idx) = 1e-3f;
@@ -409,7 +420,12 @@ RenderResult PathTracer::render()
                   const Vec3 nee = throughput(idx) * f * Li * (w_mis / env_pdf);
 
                   nee_contrib(idx) = nee_contrib(idx) + nee;
-                  nee_active(idx) = 1u;
+                  if (nee_active(idx) == 0u) {
+                    nee_active(idx) = 1u;
+                    Kokkos::atomic_add(&nee_count(), 1u);
+                  } else {
+                    nee_active(idx) = 1u;
+                  }
 
                   shadow_rays.origins(idx) = p;
                   shadow_rays.directions(idx) = wi;
@@ -459,28 +475,22 @@ RenderResult PathTracer::render()
             rays.tmax(idx) = 1e30f;
           });
 
-      m_backend->trace_occluded(shadow_rays, occluded);
+      // Skip shadow tracing entirely if no NEE rays were spawned
+      auto nee_count_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, m_nee_count);
+      if (nee_count_host() > 0u) {
+        m_backend->trace_occluded(shadow_rays, occluded);
+      }
 
       Kokkos::parallel_for(
-          "pt_nee_accum",
+          "pt_nee_accum_pack",
           Kokkos::RangePolicy<>(0, int(pixel_count)),
           KOKKOS_LAMBDA(const int idx) {
-            if (active(idx) == 0u)
-              return;
-            if (nee_active(idx) == 0u)
-              return;
-            if (occluded(idx) == 0u) {
-              accum(idx) = accum(idx) + nee_contrib(idx);
-            }
-          });
-
-      Kokkos::parallel_for(
-          "pt_pack_active",
-          Kokkos::RangePolicy<>(0, int(pixel_count)),
-          KOKKOS_LAMBDA(const int idx) {
-            if (active(idx) == 0u) {
+            if (active(idx) != 0u) {
+              if (nee_active(idx) != 0u && occluded(idx) == 0u) {
+                accum(idx) = accum(idx) + nee_contrib(idx);
+              }
+            } else {
               rays.tmax(idx) = 0.f;
-              return;
             }
           });
     }
