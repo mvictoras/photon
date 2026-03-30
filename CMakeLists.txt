@@ -38,3 +38,4 @@ if(BUILD_TESTING)
 endif()
 
 add_subdirectory(app)
+add_subdirectory(tools)
