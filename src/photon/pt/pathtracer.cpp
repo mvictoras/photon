@@ -242,8 +242,6 @@ RenderResult PathTracer::render()
 
               if (has_env_map) {
                 L = env_map_val.evaluate(rays.directions(idx));
-              } else if (ambient_radiance > 0.f) {
-                L = ambient_color * ambient_radiance;
               }
 
               accum(idx) = accum(idx) + throughput(idx) * L;
