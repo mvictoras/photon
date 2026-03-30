@@ -95,9 +95,6 @@ private:
   Kokkos::View<u32 *> m_nee_active;
   Kokkos::View<u32 *> m_occluded;
   Kokkos::View<Vec3 *> m_sample_start;
-
-  // Scalar counter: number of active NEE rays this bounce (for skip optimization)
-  Kokkos::View<u32> m_nee_count;
 };
 
 } // namespace photon::pt
