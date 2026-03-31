@@ -17,6 +17,24 @@ struct EnvironmentMap {
   u32 width{0};
   u32 height{0};
 
+  // Rotation from world space to texture (env map) space and back.
+  f32 world_to_tex[9] = {1,0,0, 0,1,0, 0,0,1};
+  f32 tex_to_world[9] = {1,0,0, 0,1,0, 0,0,1};
+
+  KOKKOS_FUNCTION Vec3 to_tex_space(const Vec3 &d) const
+  {
+    return {world_to_tex[0]*d.x + world_to_tex[1]*d.y + world_to_tex[2]*d.z,
+            world_to_tex[3]*d.x + world_to_tex[4]*d.y + world_to_tex[5]*d.z,
+            world_to_tex[6]*d.x + world_to_tex[7]*d.y + world_to_tex[8]*d.z};
+  }
+
+  KOKKOS_FUNCTION Vec3 to_world_space(const Vec3 &d) const
+  {
+    return {tex_to_world[0]*d.x + tex_to_world[1]*d.y + tex_to_world[2]*d.z,
+            tex_to_world[3]*d.x + tex_to_world[4]*d.y + tex_to_world[5]*d.z,
+            tex_to_world[6]*d.x + tex_to_world[7]*d.y + tex_to_world[8]*d.z};
+  }
+
   void build_cdf();
 
   KOKKOS_FUNCTION Vec3 evaluate(const Vec3 &direction) const
@@ -24,7 +42,7 @@ struct EnvironmentMap {
     if (width == 0 || height == 0)
       return {0.f, 0.f, 0.f};
 
-    const Vec2 uv = dir_to_uv(direction);
+    const Vec2 uv = dir_to_uv(to_tex_space(direction));
 
     const f32 xf = uv.x * (f32)width;
     const f32 yf = uv.y * (f32)height;
@@ -84,7 +102,7 @@ struct EnvironmentMap {
     const f32 v = ((f32)row + 0.5f) / (f32)height;
 
     const Vec2 uv{u, v};
-    const Vec3 dir = uv_to_dir(uv);
+    const Vec3 dir = to_world_space(uv_to_dir(uv));
 
     const f32 theta = v * PI;
     const f32 sin_theta = Kokkos::sin(theta);
@@ -99,7 +117,7 @@ struct EnvironmentMap {
     if (width == 0 || height == 0)
       return 0.f;
 
-    const Vec2 uv = dir_to_uv(direction);
+    const Vec2 uv = dir_to_uv(to_tex_space(direction));
     const f32 xf = uv.x * (f32)width;
     const f32 yf = uv.y * (f32)height;
 

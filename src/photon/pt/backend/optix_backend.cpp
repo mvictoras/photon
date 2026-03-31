@@ -252,7 +252,10 @@ void OptixBackend::create_pipeline()
   log_size = sizeof(log);
   check_optix(optixPipelineCreate(m_context, &pipeline_compile_options, &link_options,
       groups, 3, log, &log_size, &m_pipeline), "pipelineCreate");
-  check_optix(optixPipelineSetStackSize(m_pipeline, 2048, 2048, 2048, 1), "setStackSize");
+  // Depth 1 = GAS only, depth 2 = IAS→GAS, depth 3 = IAS→IAS→GAS.
+  // The two-level IAS build (top-IAS → per-object child-IAS → GAS) requires depth 3.
+  // Setting this too low causes undefined behavior (stack corruption, wrong instance IDs).
+  check_optix(optixPipelineSetStackSize(m_pipeline, 2048, 2048, 2048, 3), "setStackSize");
 
   SbtRecord<EmptyData> rg_record{}, ms_record{}, hg_record{};
   optixSbtRecordPackHeader(raygen_pg, &rg_record);

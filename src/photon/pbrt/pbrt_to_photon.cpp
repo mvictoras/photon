@@ -72,11 +72,8 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
     total_tris += mesh.indices.size() / 3;
 
   if (total_tris == 0) {
-    std::fprintf(stderr, "pbrt scene has no triangles\n");
-    return result;
+    std::fprintf(stderr, "pbrt scene has no scene-level triangles (instanced-only scene)\n");
   }
-
-  const uint64_t total_verts = total_tris * 3;
 
   std::map<std::string, i32> tex_name_to_id;
   std::vector<const PbrtTexture *> tex_list;
@@ -86,21 +83,6 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
       tex_list.push_back(&tex);
     }
   }
-
-  TriangleMesh tm;
-  tm.positions = Kokkos::View<Vec3 *>("pos", total_verts);
-  tm.indices = Kokkos::View<u32 *>("idx", total_verts);
-  tm.material_ids = Kokkos::View<u32 *>("mat_id", total_tris);
-  tm.albedo_per_prim = Kokkos::View<Vec3 *>("alb", total_tris);
-  tm.normals = Kokkos::View<Vec3 *>("normals", total_verts);
-  tm.texcoords = Kokkos::View<Vec2 *>("uv", total_verts);
-
-  auto pos_h = Kokkos::create_mirror_view(tm.positions);
-  auto idx_h = Kokkos::create_mirror_view(tm.indices);
-  auto mat_id_h = Kokkos::create_mirror_view(tm.material_ids);
-  auto alb_h = Kokkos::create_mirror_view(tm.albedo_per_prim);
-  auto nrm_h = Kokkos::create_mirror_view(tm.normals);
-  auto uv_h = Kokkos::create_mirror_view(tm.texcoords);
 
   std::vector<Material> materials_cpu;
   std::vector<Light> lights_cpu;
@@ -177,107 +159,127 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
     mat_name_to_id["__default__"] = 0;
   }
 
-  uint64_t vert_off = 0;
-  uint64_t tri_off = 0;
-
-  for (const auto &mesh : pbrt.meshes) {
-    Mat4 xfm = mat4_from_pbrt_column_major(mesh.transform);
-
-    u32 mat_id = 0;
-    auto it = mat_name_to_id.find(mesh.material_name);
-    if (it != mat_name_to_id.end())
-      mat_id = it->second;
-
-    const bool has_uvs = mesh.uvs.size() >= (mesh.positions.size() / 3) * 2;
-
-    if (!mesh.alpha_texture.empty()) {
-      auto ait = tex_name_to_id.find(mesh.alpha_texture);
-      if (ait != tex_name_to_id.end()) {
-        Material alpha_mat = materials_cpu[mat_id];
-        alpha_mat.alpha_tex = ait->second;
-        mat_id = u32(materials_cpu.size());
-        materials_cpu.push_back(alpha_mat);
-      }
-    }
-
-    if (mesh.is_emissive) {
-      Material emit_mat{};
-      emit_mat.base_color = {0.f, 0.f, 0.f};
-      emit_mat.emission = {mesh.emission.x, mesh.emission.y, mesh.emission.z};
-      emit_mat.emission_strength = 1.f;
-      emit_mat.roughness = 1.f;
-      mat_id = u32(materials_cpu.size());
-      materials_cpu.push_back(emit_mat);
-    }
-
-    const size_t ntris = mesh.indices.size() / 3;
-    const bool has_normals = mesh.normals.size() >= mesh.positions.size();
-
-    for (size_t t = 0; t < ntris; ++t) {
-      const int i0 = mesh.indices[t * 3 + 0];
-      const int i1 = mesh.indices[t * 3 + 1];
-      const int i2 = mesh.indices[t * 3 + 2];
-
-      Vec3 p0 = {mesh.positions[i0*3], mesh.positions[i0*3+1], mesh.positions[i0*3+2]};
-      Vec3 p1 = {mesh.positions[i1*3], mesh.positions[i1*3+1], mesh.positions[i1*3+2]};
-      Vec3 p2 = {mesh.positions[i2*3], mesh.positions[i2*3+1], mesh.positions[i2*3+2]};
-
-      p0 = transform_point(xfm, p0);
-      p1 = transform_point(xfm, p1);
-      p2 = transform_point(xfm, p2);
-
-      pos_h(vert_off + 0) = p0;
-      pos_h(vert_off + 1) = p1;
-      pos_h(vert_off + 2) = p2;
-
-      idx_h(vert_off + 0) = u32(vert_off + 0);
-      idx_h(vert_off + 1) = u32(vert_off + 1);
-      idx_h(vert_off + 2) = u32(vert_off + 2);
-
-      if (has_normals) {
-        Vec3 n0 = {mesh.normals[i0*3], mesh.normals[i0*3+1], mesh.normals[i0*3+2]};
-        Vec3 n1 = {mesh.normals[i1*3], mesh.normals[i1*3+1], mesh.normals[i1*3+2]};
-        Vec3 n2 = {mesh.normals[i2*3], mesh.normals[i2*3+1], mesh.normals[i2*3+2]};
-        nrm_h(vert_off + 0) = normalize(transform_direction(xfm, n0));
-        nrm_h(vert_off + 1) = normalize(transform_direction(xfm, n1));
-        nrm_h(vert_off + 2) = normalize(transform_direction(xfm, n2));
-      } else {
-        Vec3 face_n = normalize(cross(p1 - p0, p2 - p0));
-        nrm_h(vert_off + 0) = face_n;
-        nrm_h(vert_off + 1) = face_n;
-        nrm_h(vert_off + 2) = face_n;
-      }
-
-      if (has_uvs) {
-        uv_h(vert_off + 0) = {mesh.uvs[i0 * 2], mesh.uvs[i0 * 2 + 1]};
-        uv_h(vert_off + 1) = {mesh.uvs[i1 * 2], mesh.uvs[i1 * 2 + 1]};
-        uv_h(vert_off + 2) = {mesh.uvs[i2 * 2], mesh.uvs[i2 * 2 + 1]};
-      }
-
-      mat_id_h(tri_off) = mat_id;
-      alb_h(tri_off) = materials_cpu[mat_id].base_color;
-
-    if (mesh.is_emissive) {
-        emissive_prim_ids.push_back(u32(tri_off));
-        f32 area = 0.5f * length(cross(p1 - p0, p2 - p0));
-        emissive_prim_areas.push_back(area);
-      }
-
-      vert_off += 3;
-      tri_off += 1;
-    }
-  }
-
-  Kokkos::deep_copy(tm.positions, pos_h);
-  Kokkos::deep_copy(tm.indices, idx_h);
-  Kokkos::deep_copy(tm.material_ids, mat_id_h);
-  Kokkos::deep_copy(tm.albedo_per_prim, alb_h);
-  Kokkos::deep_copy(tm.normals, nrm_h);
-  Kokkos::deep_copy(tm.texcoords, uv_h);
-
   Scene &scene = result.scene;
-  scene.mesh = tm;
-  scene.bvh = Bvh::build_cpu(tm);
+
+  if (total_tris > 0) {
+    const uint64_t total_verts = total_tris * 3;
+
+    TriangleMesh tm;
+    tm.positions = Kokkos::View<Vec3 *>("pos", total_verts);
+    tm.indices = Kokkos::View<u32 *>("idx", total_verts);
+    tm.material_ids = Kokkos::View<u32 *>("mat_id", total_tris);
+    tm.albedo_per_prim = Kokkos::View<Vec3 *>("alb", total_tris);
+    tm.normals = Kokkos::View<Vec3 *>("normals", total_verts);
+    tm.texcoords = Kokkos::View<Vec2 *>("uv", total_verts);
+
+    auto pos_h = Kokkos::create_mirror_view(tm.positions);
+    auto idx_h = Kokkos::create_mirror_view(tm.indices);
+    auto mat_id_h = Kokkos::create_mirror_view(tm.material_ids);
+    auto alb_h = Kokkos::create_mirror_view(tm.albedo_per_prim);
+    auto nrm_h = Kokkos::create_mirror_view(tm.normals);
+    auto uv_h = Kokkos::create_mirror_view(tm.texcoords);
+
+    uint64_t vert_off = 0;
+    uint64_t tri_off = 0;
+
+    for (const auto &mesh : pbrt.meshes) {
+      Mat4 xfm = mat4_from_pbrt_column_major(mesh.transform);
+
+      u32 mat_id = 0;
+      auto it = mat_name_to_id.find(mesh.material_name);
+      if (it != mat_name_to_id.end())
+        mat_id = it->second;
+
+      const bool has_uvs = mesh.uvs.size() >= (mesh.positions.size() / 3) * 2;
+
+      if (!mesh.alpha_texture.empty()) {
+        auto ait = tex_name_to_id.find(mesh.alpha_texture);
+        if (ait != tex_name_to_id.end()) {
+          Material alpha_mat = materials_cpu[mat_id];
+          alpha_mat.alpha_tex = ait->second;
+          mat_id = u32(materials_cpu.size());
+          materials_cpu.push_back(alpha_mat);
+        }
+      }
+
+      if (mesh.is_emissive) {
+        Material emit_mat{};
+        emit_mat.base_color = {0.f, 0.f, 0.f};
+        emit_mat.emission = {mesh.emission.x, mesh.emission.y, mesh.emission.z};
+        emit_mat.emission_strength = 1.f;
+        emit_mat.roughness = 1.f;
+        mat_id = u32(materials_cpu.size());
+        materials_cpu.push_back(emit_mat);
+      }
+
+      const size_t ntris = mesh.indices.size() / 3;
+      const bool has_normals = mesh.normals.size() >= mesh.positions.size();
+
+      for (size_t t = 0; t < ntris; ++t) {
+        const int i0 = mesh.indices[t * 3 + 0];
+        const int i1 = mesh.indices[t * 3 + 1];
+        const int i2 = mesh.indices[t * 3 + 2];
+
+        Vec3 p0 = {mesh.positions[i0*3], mesh.positions[i0*3+1], mesh.positions[i0*3+2]};
+        Vec3 p1 = {mesh.positions[i1*3], mesh.positions[i1*3+1], mesh.positions[i1*3+2]};
+        Vec3 p2 = {mesh.positions[i2*3], mesh.positions[i2*3+1], mesh.positions[i2*3+2]};
+
+        p0 = transform_point(xfm, p0);
+        p1 = transform_point(xfm, p1);
+        p2 = transform_point(xfm, p2);
+
+        pos_h(vert_off + 0) = p0;
+        pos_h(vert_off + 1) = p1;
+        pos_h(vert_off + 2) = p2;
+
+        idx_h(vert_off + 0) = u32(vert_off + 0);
+        idx_h(vert_off + 1) = u32(vert_off + 1);
+        idx_h(vert_off + 2) = u32(vert_off + 2);
+
+        if (has_normals) {
+          Vec3 n0 = {mesh.normals[i0*3], mesh.normals[i0*3+1], mesh.normals[i0*3+2]};
+          Vec3 n1 = {mesh.normals[i1*3], mesh.normals[i1*3+1], mesh.normals[i1*3+2]};
+          Vec3 n2 = {mesh.normals[i2*3], mesh.normals[i2*3+1], mesh.normals[i2*3+2]};
+          nrm_h(vert_off + 0) = normalize(transform_direction(xfm, n0));
+          nrm_h(vert_off + 1) = normalize(transform_direction(xfm, n1));
+          nrm_h(vert_off + 2) = normalize(transform_direction(xfm, n2));
+        } else {
+          Vec3 face_n = normalize(cross(p1 - p0, p2 - p0));
+          nrm_h(vert_off + 0) = face_n;
+          nrm_h(vert_off + 1) = face_n;
+          nrm_h(vert_off + 2) = face_n;
+        }
+
+        if (has_uvs) {
+          uv_h(vert_off + 0) = {mesh.uvs[i0 * 2], mesh.uvs[i0 * 2 + 1]};
+          uv_h(vert_off + 1) = {mesh.uvs[i1 * 2], mesh.uvs[i1 * 2 + 1]};
+          uv_h(vert_off + 2) = {mesh.uvs[i2 * 2], mesh.uvs[i2 * 2 + 1]};
+        }
+
+        mat_id_h(tri_off) = mat_id;
+        alb_h(tri_off) = materials_cpu[mat_id].base_color;
+
+        if (mesh.is_emissive) {
+          emissive_prim_ids.push_back(u32(tri_off));
+          f32 area = 0.5f * length(cross(p1 - p0, p2 - p0));
+          emissive_prim_areas.push_back(area);
+        }
+
+        vert_off += 3;
+        tri_off += 1;
+      }
+    }
+
+    Kokkos::deep_copy(tm.positions, pos_h);
+    Kokkos::deep_copy(tm.indices, idx_h);
+    Kokkos::deep_copy(tm.material_ids, mat_id_h);
+    Kokkos::deep_copy(tm.albedo_per_prim, alb_h);
+    Kokkos::deep_copy(tm.normals, nrm_h);
+    Kokkos::deep_copy(tm.texcoords, uv_h);
+
+    scene.mesh = tm;
+    scene.bvh = Bvh::build_cpu(tm);
+  }
 
   scene.material_count = u32(materials_cpu.size());
   {
@@ -405,6 +407,18 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
       env.marginal_cdf = Kokkos::View<f32 *>("env_marginal", env.height + 1);
       env.conditional_cdf = Kokkos::View<f32 **>("env_conditional", env.height, env.width + 1);
       env.build_cdf();
+      // Apply environment map rotation from PBRT scene transform
+      Mat4 env_xfm = mat4_from_pbrt_column_major(pbrt.env_map_transform);
+      Mat4 env_inv = env_xfm.inverse();
+      // world_to_tex = inverse of the object-to-world env transform (3x3 upper-left)
+      env.world_to_tex[0] = env_inv.m[0][0]; env.world_to_tex[1] = env_inv.m[0][1]; env.world_to_tex[2] = env_inv.m[0][2];
+      env.world_to_tex[3] = env_inv.m[1][0]; env.world_to_tex[4] = env_inv.m[1][1]; env.world_to_tex[5] = env_inv.m[1][2];
+      env.world_to_tex[6] = env_inv.m[2][0]; env.world_to_tex[7] = env_inv.m[2][1]; env.world_to_tex[8] = env_inv.m[2][2];
+      // tex_to_world = the object-to-world env transform (3x3 upper-left)
+      env.tex_to_world[0] = env_xfm.m[0][0]; env.tex_to_world[1] = env_xfm.m[0][1]; env.tex_to_world[2] = env_xfm.m[0][2];
+      env.tex_to_world[3] = env_xfm.m[1][0]; env.tex_to_world[4] = env_xfm.m[1][1]; env.tex_to_world[5] = env_xfm.m[1][2];
+      env.tex_to_world[6] = env_xfm.m[2][0]; env.tex_to_world[7] = env_xfm.m[2][1]; env.tex_to_world[8] = env_xfm.m[2][2];
+      std::fprintf(stderr, "  Env map rotation applied (transform from scene)\n");
       scene.env_map = env;
       std::fprintf(stderr, "  Environment map: %s (%ux%u)\n", env_path.c_str(), env.width, env.height);
     }
@@ -413,16 +427,12 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
   Vec3 cam_pos, cam_dir, cam_up;
 
   if (pbrt.camera.has_lookat) {
-    cam_pos = {pbrt.camera.look_from.x * pbrt.camera.scale[0],
-               pbrt.camera.look_from.y * pbrt.camera.scale[1],
-               pbrt.camera.look_from.z * pbrt.camera.scale[2]};
-    Vec3 look_target = {pbrt.camera.look_at_pt.x * pbrt.camera.scale[0],
-                        pbrt.camera.look_at_pt.y * pbrt.camera.scale[1],
-                        pbrt.camera.look_at_pt.z * pbrt.camera.scale[2]};
+    // LookAt positions are in world space — Scale before Camera only affects
+    // camera-internal handedness, not world-space eye/at/up coordinates.
+    cam_pos = {pbrt.camera.look_from.x, pbrt.camera.look_from.y, pbrt.camera.look_from.z};
+    Vec3 look_target = {pbrt.camera.look_at_pt.x, pbrt.camera.look_at_pt.y, pbrt.camera.look_at_pt.z};
     cam_dir = normalize(look_target - cam_pos);
-    cam_up = normalize(Vec3{pbrt.camera.look_up.x * pbrt.camera.scale[0],
-                            pbrt.camera.look_up.y * pbrt.camera.scale[1],
-                            pbrt.camera.look_up.z * pbrt.camera.scale[2]});
+    cam_up = normalize(Vec3{pbrt.camera.look_up.x, pbrt.camera.look_up.y, pbrt.camera.look_up.z});
   } else {
     Mat4 world_to_cam = mat4_from_pbrt_column_major(pbrt.camera.transform);
     Mat4 cam_to_world = world_to_cam.inverse();
