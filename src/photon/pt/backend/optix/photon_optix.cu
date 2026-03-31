@@ -35,18 +35,22 @@ struct Params {
   float3 *directions;
   float *tmin;
   float *tmax;
+
   void *hit_results;
   unsigned int *occluded;
+
   float3 *mesh_positions;
   unsigned int *mesh_indices;
   float3 *mesh_normals;
   float2 *mesh_texcoords;
   unsigned int *mesh_material_ids;
   float3 *mesh_vertex_colors;
+
   unsigned int has_normals;
   unsigned int has_texcoords;
   unsigned int has_material_ids;
   unsigned int has_vertex_colors;
+
   unsigned int count;
   unsigned int mode;
   unsigned int use_sbt_data;
@@ -102,23 +106,31 @@ extern "C" __global__ void __raygen__rg()
   optixTrace(params.handle,org,dir,params.tmin[idx],params.tmax[idx],
       0.f,0xFFu,OPTIX_RAY_FLAG_NONE,0,1,0,p0,p1,p2,p3,p4,p5);
   if(params.mode==1){params.occluded[idx]=p0;return;}
+
+  if(params.use_sbt_data){
+    // IAS path: __closesthit__ already wrote hit result to hit_results.
+    // Only handle the miss case here.
+    if(!p0){
+      HitResultGPU hr{};
+      hr.hit=false;hr.t=0.f;hr.prim_id=0;hr.material_id=0;
+      hr.uv={0.f,0.f};
+      hr.position=hr.normal=hr.shading_normal=hr.interpolated_color={0.f,0.f,0.f};
+      hr.has_interpolated_color=false;
+      ((HitResultGPU*)params.hit_results)[idx]=hr;
+    }
+    return;
+  }
+
+  // Non-IAS path: shade here (normals already world-space from CPU conversion).
   HitResultGPU hr{};
   hr.hit=(p0!=0); hr.inst_id=p5;
   if(hr.hit){
     const float bu=__uint_as_float(p3),bv=__uint_as_float(p4);
     const float t=__uint_as_float(p2);
-    if(params.use_sbt_data && params.object_meshes && p5 < params.object_count){
-      const MeshData &md=params.object_meshes[p5];
-      shade_hit(p1,bu,bv,org,dir,t,
-          md.positions,md.indices,md.normals,md.texcoords,
-          md.material_ids,md.vertex_colors,
-          md.has_normals,md.has_texcoords,md.has_material_ids,md.has_vertex_colors,hr);
-    } else {
-      shade_hit(p1,bu,bv,org,dir,t,
-          params.mesh_positions,params.mesh_indices,params.mesh_normals,params.mesh_texcoords,
-          params.mesh_material_ids,params.mesh_vertex_colors,
-          params.has_normals,params.has_texcoords,params.has_material_ids,params.has_vertex_colors,hr);
-    }
+    shade_hit(p1,bu,bv,org,dir,t,
+        params.mesh_positions,params.mesh_indices,params.mesh_normals,params.mesh_texcoords,
+        params.mesh_material_ids,params.mesh_vertex_colors,
+        params.has_normals,params.has_texcoords,params.has_material_ids,params.has_vertex_colors,hr);
   } else {
     hr.t=0.f;hr.prim_id=0;hr.material_id=0;
     hr.uv={0.f,0.f};hr.position=hr.normal=hr.shading_normal=hr.interpolated_color={0.f,0.f,0.f};
@@ -132,10 +144,45 @@ extern "C" __global__ void __miss__ms() { optixSetPayload_0(0); }
 extern "C" __global__ void __closesthit__ch()
 {
   optixSetPayload_0(1);
-  optixSetPayload_1(optixGetPrimitiveIndex());
-  optixSetPayload_2(__float_as_uint(optixGetRayTmax()));
+
+  if(!params.use_sbt_data){
+    // Non-IAS path: pass hit data to __raygen__ via payloads for shading there.
+    optixSetPayload_1(optixGetPrimitiveIndex());
+    optixSetPayload_2(__float_as_uint(optixGetRayTmax()));
+    const float2 b=optixGetTriangleBarycentrics();
+    optixSetPayload_3(__float_as_uint(b.x));
+    optixSetPayload_4(__float_as_uint(b.y));
+    optixSetPayload_5(optixGetInstanceId());
+    return;
+  }
+
+  // IAS path: shade here where optixGetWorldToObjectTransformF() is available.
+  if(params.mode==1) return;  // occlusion: p0=1 is sufficient
+
+  const unsigned int idx=optixGetLaunchIndex().x;
+  const unsigned int inst_id=optixGetInstanceId();
+  const unsigned int pid=optixGetPrimitiveIndex();
   const float2 b=optixGetTriangleBarycentrics();
-  optixSetPayload_3(__float_as_uint(b.x));
-  optixSetPayload_4(__float_as_uint(b.y));
-  optixSetPayload_5(optixGetInstanceId());
+  const float bu=b.x,bv=b.y;
+  const float t=optixGetRayTmax();
+  const float3 org=optixGetWorldRayOrigin();
+  const float3 dir=optixGetWorldRayDirection();
+
+  HitResultGPU hr{};
+  hr.hit=true;hr.inst_id=inst_id;
+
+  if(params.object_meshes && inst_id<params.object_count){
+    const MeshData &md=params.object_meshes[inst_id];
+    shade_hit(pid,bu,bv,org,dir,t,
+        md.positions,md.indices,md.normals,md.texcoords,
+        md.material_ids,md.vertex_colors,
+        md.has_normals,md.has_texcoords,md.has_material_ids,md.has_vertex_colors,hr);
+
+    // Transform normals from object space to world space using the instance
+    // transform's inverse-transpose (handles rotation + non-uniform scale correctly).
+    hr.normal=normalize3(optixTransformNormalFromObjectToWorldSpace(hr.normal));
+    hr.shading_normal=normalize3(optixTransformNormalFromObjectToWorldSpace(hr.shading_normal));
+  }
+
+  ((HitResultGPU*)params.hit_results)[idx]=hr;
 }

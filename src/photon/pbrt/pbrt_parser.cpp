@@ -242,6 +242,7 @@ PbrtScene parse_pbrt_file(const std::string &path, bool use_instancing)
   std::stack<ParseState> state_stack;
   ParseState state;
 
+  bool in_world = false;
   std::map<std::string, std::vector<PbrtTriMesh>> object_defs;
   std::string current_object;
   std::map<std::string, uint64_t> instance_counts;
@@ -341,9 +342,11 @@ PbrtScene parse_pbrt_file(const std::string &path, bool use_instancing)
       };
       mul(state.transform, scale_m, result);
       std::memcpy(state.transform, result, 64);
-      scene.camera.scale[0] *= sx;
-      scene.camera.scale[1] *= sy;
-      scene.camera.scale[2] *= sz;
+      if (!in_world) {
+        scene.camera.scale[0] *= sx;
+        scene.camera.scale[1] *= sy;
+        scene.camera.scale[2] *= sz;
+      }
     } else if (t.text == "Rotate") {
       float angle = tok.next().num;
       float ax = tok.next().num, ay = tok.next().num, az = tok.next().num;
@@ -385,13 +388,15 @@ PbrtScene parse_pbrt_file(const std::string &path, bool use_instancing)
               r[i*4+j] = sv;
             }
         };
-        mul(state.transform, concat, result);
+        // pbrt-v4 post-multiplies: new_CTM = old_CTM * M_concat
+        mul(concat, state.transform, result);
         std::memcpy(state.transform, result, 64);
       }
     } else if (t.text == "Identity") {
       for (int i = 0; i < 16; ++i)
         state.transform[i] = (i % 5 == 0) ? 1.f : 0.f;
     } else if (t.text == "WorldBegin") {
+      in_world = true;
       for (int i = 0; i < 16; ++i)
         state.transform[i] = (i % 5 == 0) ? 1.f : 0.f;
     } else if (t.text == "AttributeBegin") {
