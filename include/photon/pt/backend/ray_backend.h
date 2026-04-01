@@ -10,6 +10,7 @@
 namespace photon::pt {
 
 struct Scene;
+struct InstancedGeometry;
 
 struct HitResult {
   f32 t{0.f};
@@ -42,6 +43,10 @@ struct HitBatch {
 struct RayBackend {
   virtual ~RayBackend() = default;
   virtual void build_accel(const Scene &scene) = 0;
+  virtual void build_accel_instanced(const Scene &scene,
+                                      const InstancedGeometry &instanced) {
+    build_accel(scene);
+  }
   virtual void trace_closest(const RayBatch &rays, HitBatch &hits) = 0;
   virtual void trace_occluded(const RayBatch &rays, Kokkos::View<u32 *> occluded) = 0;
   virtual const char *name() const = 0;
