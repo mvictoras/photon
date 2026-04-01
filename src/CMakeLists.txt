@@ -45,7 +45,7 @@ set(PHOTON_CUDA_SOURCES
   photon/anari/device.cpp
   photon/anari/library.cpp
   photon/anari/entrypoint.cpp
-  photon/pathtracer/version.cpp
+  photon/pt/version.cpp
   photon/pbrt/pbrt_parser.cpp
   photon/pbrt/pbrt_to_photon.cpp
   photon/pbrt/ply_reader.cpp
@@ -81,7 +81,7 @@ target_sources(anari_library_photon
     ${PHOTON_CUDA_SOURCES}
     ${PHOTON_CXX_SOURCES}
   PUBLIC
-    ${PROJECT_SOURCE_DIR}/include/photon/pathtracer/version.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/version.h
     ${PROJECT_SOURCE_DIR}/include/photon/anari/device.h
     ${PROJECT_SOURCE_DIR}/include/photon/anari/library.h
     photon/anari/PhotonDevice.h

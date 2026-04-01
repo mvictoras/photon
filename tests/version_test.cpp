@@ -1,4 +1,4 @@
-#include "photon/pathtracer/version.h"
+#include "photon/pt/version.h"
 
 #include <cassert>
 
