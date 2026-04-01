@@ -1,6 +1,6 @@
 #include <iostream>
 
-#include "photon/pathtracer/version.h"
+#include "photon/pt/version.h"
 
 int main()
 {
