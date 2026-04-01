@@ -11,7 +11,6 @@
 
 #include "photon/pbrt/pbrt_parser.h"
 #include "photon/pbrt/pbrt_to_photon.h"
-#include "photon/pt/backend/optix_backend.h"
 #include "photon/pt/backend/ray_backend.h"
 #include "photon/pt/denoiser.h"
 #include "photon/pt/pathtracer.h"
@@ -145,31 +144,12 @@ int main(int argc, char **argv)
 
     auto backend = photon::pt::create_best_backend();
 
-#ifdef PHOTON_HAS_OPTIX
-    if (!pbrt_scene.object_instances.empty() && !pbrt_scene.object_defs.empty()) {
-      auto *optix_backend = dynamic_cast<photon::pt::OptixBackend *>(backend.get());
-      if (optix_backend) {
-        std::vector<photon::pbrt::PbrtTriMesh> flat_obj_meshes;
-        std::vector<photon::pbrt::PbrtInstance> sorted_instances;
-        for (const auto &[name, meshes] : pbrt_scene.object_defs)
-          for (const auto &m : meshes) {
-            photon::pbrt::PbrtTriMesh copy = m;
-            copy.object_name = name;
-            flat_obj_meshes.push_back(copy);
-          }
-        sorted_instances = pbrt_scene.object_instances;
-        std::fprintf(stderr, "Using OptiX IAS: %zu objects, %zu instances\n",
-            pbrt_scene.object_defs.size(), sorted_instances.size());
-        optix_backend->build_accel_instanced(converted.scene, &flat_obj_meshes, &sorted_instances,
-            &converted.mat_name_to_id);
-        goto backend_built;
-      }
+    if (!converted.instanced_geometry.empty()) {
+      std::fprintf(stderr, "Using IAS: %zu objects, %zu instances\n",
+          converted.instanced_geometry.objects.size(),
+          converted.instanced_geometry.instances.size());
     }
-#endif
-    backend->build_accel(converted.scene);
-#ifdef PHOTON_HAS_OPTIX
-    backend_built:;
-#endif
+    backend->build_accel_instanced(converted.scene, converted.instanced_geometry);
 
     photon::pt::PathTracer pt;
     pt.params.width = uint32_t(pbrt_scene.width);

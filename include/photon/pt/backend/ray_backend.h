@@ -44,7 +44,7 @@ struct RayBackend {
   virtual ~RayBackend() = default;
   virtual void build_accel(const Scene &scene) = 0;
   virtual void build_accel_instanced(const Scene &scene,
-                                      const InstancedGeometry &instanced) {
+                                      const InstancedGeometry & /*instanced*/) {
     build_accel(scene);
   }
   virtual void trace_closest(const RayBatch &rays, HitBatch &hits) = 0;

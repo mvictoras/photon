@@ -450,7 +450,53 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
         ? pbrt.camera.focaldistance : length(cam_dir);
   }
 
-  result.mat_name_to_id = mat_name_to_id;
+  // Build format-agnostic instanced geometry for backends that support IAS.
+  if (!pbrt.object_defs.empty() && !pbrt.object_instances.empty()) {
+    auto &ig = result.instanced_geometry;
+
+    std::map<std::string, u32> obj_name_to_idx;
+    for (const auto &[name, meshes] : pbrt.object_defs) {
+      u32 idx = u32(ig.objects.size());
+      obj_name_to_idx[name] = idx;
+
+      // Merge all sub-meshes of this object into one ObjectMesh.
+      photon::pt::ObjectMesh obj;
+      uint64_t voff = 0;
+      for (const auto &m : meshes) {
+        const uint64_t nv = m.positions.size() / 3;
+
+        // Resolve material (last sub-mesh wins when multiple materials present)
+        u32 mid = 0;
+        auto it = mat_name_to_id.find(m.material_name);
+        if (it != mat_name_to_id.end()) mid = it->second;
+        obj.material_id = mid;
+
+        obj.positions.insert(obj.positions.end(),
+            m.positions.begin(), m.positions.end());
+        for (int idx_val : m.indices)
+          obj.indices.push_back(idx_val + int(voff));
+        if (m.normals.size() >= m.positions.size())
+          obj.normals.insert(obj.normals.end(),
+              m.normals.begin(), m.normals.end());
+        if (!m.uvs.empty())
+          obj.uvs.insert(obj.uvs.end(), m.uvs.begin(), m.uvs.end());
+
+        voff += nv;
+      }
+      ig.objects.push_back(std::move(obj));
+    }
+
+    for (const auto &inst : pbrt.object_instances) {
+      auto it = obj_name_to_idx.find(inst.object_name);
+      if (it == obj_name_to_idx.end()) continue;
+
+      photon::pt::Instance gi;
+      gi.object_id = it->second;
+      std::memcpy(gi.transform, inst.transform, sizeof(float) * 16);
+      ig.instances.push_back(gi);
+    }
+  }
+
   return result;
 }
 

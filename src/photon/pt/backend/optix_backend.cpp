@@ -497,27 +497,16 @@ static OptixTraversableHandle build_single_ias(OptixDeviceContext ctx,
 }
 
 void OptixBackend::build_ias(const std::vector<ObjectGAS> &gas_list,
-                              const std::vector<photon::pbrt::PbrtInstance> &instances,
+                              const std::vector<Instance> &instances,
                               const ObjectGAS *scene_gas)
 {
   if (instances.empty() || gas_list.empty()) return;
 
   const u32 n_obj = u32(gas_list.size());
 
-  std::map<std::string, u32> name_to_idx;
-  std::vector<std::string> obj_names;
-  for (const auto &inst : instances) {
-    if (name_to_idx.find(inst.object_name) == name_to_idx.end()) {
-      name_to_idx[inst.object_name] = u32(obj_names.size());
-      obj_names.push_back(inst.object_name);
-    }
-  }
-
   std::vector<std::vector<OptixInstance>> per_obj_instances(n_obj);
   for (const auto &inst : instances) {
-    auto it = name_to_idx.find(inst.object_name);
-    if (it == name_to_idx.end()) continue;
-    const u32 obj_idx = it->second;
+    const u32 obj_idx = inst.object_id;
     if (obj_idx >= n_obj || gas_list[obj_idx].handle == 0) continue;
 
     Mat4 xfm = col_major_to_mat4(inst.transform);
@@ -662,86 +651,54 @@ void OptixBackend::build_ias(const std::vector<ObjectGAS> &gas_list,
 }
 
 void OptixBackend::build_accel_instanced(const Scene &scene,
-    const std::vector<photon::pbrt::PbrtTriMesh> *obj_meshes,
-    const std::vector<photon::pbrt::PbrtInstance> *instances,
-    const std::map<std::string, u32> *mat_name_to_id)
+    const InstancedGeometry &instanced)
 {
-  if (!obj_meshes || !instances || obj_meshes->empty() || instances->empty()) {
+  if (instanced.empty()) {
     build_accel(scene);
     return;
   }
 
   if (!m_pipeline) create_pipeline();
 
-  std::map<std::string, u32> obj_name_to_idx;
-  std::vector<std::string> obj_names;
-  for (const auto &inst : *instances) {
-    if (obj_name_to_idx.find(inst.object_name) == obj_name_to_idx.end()) {
-      obj_name_to_idx[inst.object_name] = u32(obj_names.size());
-      obj_names.push_back(inst.object_name);
-    }
-  }
-
+  const u32 n_objects = u32(instanced.objects.size());
   m_object_gas.clear();
-  m_object_gas.resize(obj_names.size());
+  m_object_gas.resize(n_objects);
 
-  for (u32 oi = 0; oi < u32(obj_names.size()); ++oi) {
-    const std::string &name = obj_names[oi];
-    std::vector<const photon::pbrt::PbrtTriMesh*> meshes;
-    for (const auto &m : *obj_meshes)
-      if (m.object_name == name)
-        meshes.push_back(&m);
-    if (meshes.empty()) continue;
+  for (u32 oi = 0; oi < n_objects; ++oi) {
+    const auto &obj = instanced.objects[oi];
+    if (obj.indices.empty()) continue;
 
-    uint64_t total_verts = 0, total_tris = 0;
-    bool any_normals = false;
-    for (auto *m : meshes) {
-      total_verts += m->positions.size() / 3;
-      total_tris  += m->indices.size() / 3;
-      if (m->normals.size() >= m->positions.size()) any_normals = true;
-    }
-    if (total_tris == 0) continue;
+    const uint64_t nv = obj.positions.size() / 3;
+    const uint64_t nt = obj.indices.size() / 3;
+    const bool has_normals = obj.normals.size() >= obj.positions.size();
 
     TriangleMesh tm;
-    tm.positions    = Kokkos::View<Vec3*>("p",  total_verts);
-    tm.indices      = Kokkos::View<u32*> ("i",  total_tris * 3);
-    tm.material_ids = Kokkos::View<u32*> ("m",  total_tris);
-    if (any_normals)
-      tm.normals    = Kokkos::View<Vec3*>("n",  total_verts);
+    tm.positions    = Kokkos::View<Vec3*>("p", nv);
+    tm.indices      = Kokkos::View<u32*>("i", nt * 3);
+    tm.material_ids = Kokkos::View<u32*>("m", nt);
+    if (has_normals)
+      tm.normals    = Kokkos::View<Vec3*>("n", nv);
 
     auto ph = Kokkos::create_mirror_view(tm.positions);
     auto ih = Kokkos::create_mirror_view(tm.indices);
     auto mh = Kokkos::create_mirror_view(tm.material_ids);
-    auto nh = any_normals ? Kokkos::create_mirror_view(tm.normals) : decltype(Kokkos::create_mirror_view(tm.normals)){};
+    auto nh = has_normals ? Kokkos::create_mirror_view(tm.normals)
+                          : decltype(Kokkos::create_mirror_view(tm.normals)){};
 
-    uint64_t voff = 0, ioff = 0, toff = 0;
-    for (auto *mesh : meshes) {
-      const uint64_t nv = mesh->positions.size() / 3;
-      const uint64_t ni = mesh->indices.size();
-      const uint64_t nt = ni / 3;
-
-      u32 mat_id = 0;
-      if (mat_name_to_id) {
-        auto it = mat_name_to_id->find(mesh->material_name);
-        if (it != mat_name_to_id->end()) mat_id = it->second;
-      }
-
+    for (uint64_t v = 0; v < nv; ++v)
+      ph(v) = {obj.positions[v*3], obj.positions[v*3+1], obj.positions[v*3+2]};
+    for (uint64_t i = 0; i < nt * 3; ++i)
+      ih(i) = u32(obj.indices[i]);
+    for (uint64_t t = 0; t < nt; ++t)
+      mh(t) = obj.material_id;
+    if (has_normals)
       for (uint64_t v = 0; v < nv; ++v)
-        ph(voff + v) = {mesh->positions[v*3], mesh->positions[v*3+1], mesh->positions[v*3+2]};
-      if (any_normals && mesh->normals.size() >= mesh->positions.size())
-        for (uint64_t v = 0; v < nv; ++v)
-          nh(voff + v) = {mesh->normals[v*3], mesh->normals[v*3+1], mesh->normals[v*3+2]};
-      for (uint64_t i = 0; i < ni; ++i)
-        ih(ioff + i) = u32(mesh->indices[i]) + u32(voff);
-      for (uint64_t t = 0; t < nt; ++t)
-        mh(toff + t) = mat_id;
+        nh(v) = {obj.normals[v*3], obj.normals[v*3+1], obj.normals[v*3+2]};
 
-      voff += nv; ioff += ni; toff += nt;
-    }
     Kokkos::deep_copy(tm.positions, ph);
     Kokkos::deep_copy(tm.indices,   ih);
     Kokkos::deep_copy(tm.material_ids, mh);
-    if (any_normals) Kokkos::deep_copy(tm.normals, nh);
+    if (has_normals) Kokkos::deep_copy(tm.normals, nh);
     build_gas_for_mesh(tm, m_object_gas[oi]);
   }
 
@@ -752,9 +709,9 @@ void OptixBackend::build_accel_instanced(const Scene &scene,
     m_mesh = scene.mesh;
   }
 
-  build_ias(m_object_gas, *instances, has_scene_mesh ? &scene_gas : nullptr);
-  std::fprintf(stderr, "[photon] OptiX IAS: %zu objects, %zu instances\n",
-      obj_names.size(), instances->size());
+  build_ias(m_object_gas, instanced.instances, has_scene_mesh ? &scene_gas : nullptr);
+  std::fprintf(stderr, "[photon] OptiX IAS: %u objects, %zu instances\n",
+      n_objects, instanced.instances.size());
 }
 
 void OptixBackend::trace_closest(const RayBatch &rays, HitBatch &hits)
