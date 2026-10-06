@@ -17,6 +17,7 @@
 #include "photon/pt/math.h"
 #include "photon/pt/math_mat4.h"
 #include "photon/pt/scene.h"
+#include "photon/pt/scene/upload.h"
 
 namespace photon::anari_device {
 
@@ -692,33 +693,13 @@ void merge_surfaces_to_mesh(const std::vector<SurfaceGeometry> &surfaces,
 
   // Build the TextureAtlas
   if (!atlas_entries.empty()) {
-    uint32_t total_pixels = 0;
+    std::vector<photon::pt::AtlasImage> images;
+    images.reserve(atlas_entries.size());
     for (const auto &e : atlas_entries)
-      total_pixels += e.tex->width * e.tex->height;
+      images.push_back({reinterpret_cast<const float *>(e.tex->pixels.data()),
+                        uint32_t(e.tex->width), uint32_t(e.tex->height)});
 
-    atlas.count = uint32_t(atlas_entries.size());
-    atlas.pixels = Kokkos::View<photon::pt::Vec3 *>("atlas_pixels", total_pixels);
-    atlas.infos = Kokkos::View<photon::pt::TextureInfo *>("atlas_infos", atlas.count);
-
-    auto pixels_h = Kokkos::create_mirror_view(atlas.pixels);
-    auto infos_h = Kokkos::create_mirror_view(atlas.infos);
-
-    uint32_t pixel_offset = 0;
-    for (const auto &e : atlas_entries) {
-      photon::pt::TextureInfo ti;
-      ti.offset = pixel_offset;
-      ti.width = e.tex->width;
-      ti.height = e.tex->height;
-      infos_h(e.atlas_id) = ti;
-
-      const uint32_t npx = e.tex->width * e.tex->height;
-      for (uint32_t p = 0; p < npx; ++p)
-        pixels_h(pixel_offset + p) = e.tex->pixels[p];
-      pixel_offset += npx;
-    }
-
-    Kokkos::deep_copy(atlas.pixels, pixels_h);
-    Kokkos::deep_copy(atlas.infos, infos_h);
+    atlas = photon::pt::upload_texture_atlas(images);
   }
 
   // --- Emit triangles ---
@@ -888,13 +869,7 @@ std::optional<photon::pt::Scene> build_scene_from_anari(ANARIWorld world, const 
   s.bvh = photon::pt::Bvh::build_cpu(mesh);
 
   s.material_count = uint32_t(matsCpu.size());
-  {
-    Kokkos::View<photon::pt::Material *, Kokkos::HostSpace> mats_host("mats_host", s.material_count);
-    for (uint32_t i = 0; i < s.material_count; ++i)
-      mats_host(i) = matsCpu[i];
-    s.materials = Kokkos::View<photon::pt::Material *>("materials", s.material_count);
-    Kokkos::deep_copy(s.materials, mats_host);
-  }
+  s.materials = photon::pt::upload_materials(matsCpu);
 
   // ── Lights ──
   std::vector<photon::pt::Light> lightsCpu;
@@ -979,11 +954,7 @@ std::optional<photon::pt::Scene> build_scene_from_anari(ANARIWorld world, const 
 
   if (!lightsCpu.empty()) {
     s.light_count = uint32_t(lightsCpu.size());
-    s.lights = Kokkos::View<photon::pt::Light *>("lights", s.light_count);
-    auto lights_h = Kokkos::create_mirror_view(s.lights);
-    for (uint32_t i = 0; i < s.light_count; ++i)
-      lights_h(i) = lightsCpu[i];
-    Kokkos::deep_copy(s.lights, lights_h);
+    s.lights = photon::pt::upload_lights(lightsCpu);
   } else {
     s.light_count = 0;
   }

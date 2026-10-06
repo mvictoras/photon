@@ -17,6 +17,7 @@
 #include "photon/pt/math_mat4.h"
 #include "photon/pt/environment_map.h"
 #include "photon/pt/scene.h"
+#include "photon/pt/scene/upload.h"
 
 namespace photon::pbrt {
 
@@ -461,65 +462,29 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
   }
 
   scene.material_count = u32(materials_cpu.size());
-  {
-    Kokkos::View<Material *, Kokkos::HostSpace> mats_host("mats_host", scene.material_count);
-    for (u32 i = 0; i < scene.material_count; ++i)
-      mats_host(i) = materials_cpu[i];
-    scene.materials = Kokkos::View<Material *>("materials", scene.material_count);
-    Kokkos::deep_copy(scene.materials, mats_host);
-  }
+  scene.materials = upload_materials(materials_cpu);
 
   if (!textures.list.empty()) {
-    scene.textures.count = u32(textures.list.size());
-
-    size_t total_pixels = 0;
+    std::vector<AtlasImage> images;
+    images.reserve(textures.list.size());
     for (const auto *src : textures.list)
-      total_pixels += size_t(src->width) * size_t(src->height);
+      images.push_back({src->data.data(), u32(src->width), u32(src->height)});
 
-    scene.textures.pixels = Kokkos::View<Vec3 *>("tex_pixels", total_pixels);
-    scene.textures.infos = Kokkos::View<TextureInfo *>("tex_infos", scene.textures.count);
-
-    auto pix_h = Kokkos::create_mirror_view(scene.textures.pixels);
-    auto info_h = Kokkos::create_mirror_view(scene.textures.infos);
-
-    u32 pixel_offset = 0;
-    for (u32 ti = 0; ti < scene.textures.count; ++ti) {
-      const PbrtTexture *src = textures.list[ti];
-      info_h(ti).offset = pixel_offset;
-      info_h(ti).width = u32(src->width);
-      info_h(ti).height = u32(src->height);
-
-      for (u32 y = 0; y < u32(src->height); ++y)
-        for (u32 x = 0; x < u32(src->width); ++x) {
-          size_t si = (size_t(y) * src->width + x) * 3;
-          pix_h(pixel_offset + y * u32(src->width) + x) =
-              {src->data[si], src->data[si + 1], src->data[si + 2]};
-        }
-      pixel_offset += u32(src->width) * u32(src->height);
-    }
-
-    Kokkos::deep_copy(scene.textures.pixels, pix_h);
-    Kokkos::deep_copy(scene.textures.infos, info_h);
+    scene.textures = upload_texture_atlas(images);
     std::fprintf(stderr, "  Uploaded %u textures (%zu pixels, %.1f MB) to GPU\n",
-        scene.textures.count, total_pixels, float(total_pixels * sizeof(Vec3)) / (1024.f * 1024.f));
+        scene.textures.count,
+        size_t(scene.textures.pixels.extent(0)),
+        float(size_t(scene.textures.pixels.extent(0)) * sizeof(Vec3)) / (1024.f * 1024.f));
   }
 
   if (!built.emissive_prim_ids.empty()) {
     scene.emissive_count = u32(built.emissive_prim_ids.size());
-    scene.emissive_prim_ids = Kokkos::View<u32 *>("emissive_ids", scene.emissive_count);
-    scene.emissive_prim_areas = Kokkos::View<f32 *>("emissive_areas", scene.emissive_count);
-
-    auto eids_h = Kokkos::create_mirror_view(scene.emissive_prim_ids);
-    auto eareas_h = Kokkos::create_mirror_view(scene.emissive_prim_areas);
+    scene.emissive_prim_ids = upload_u32(built.emissive_prim_ids);
+    scene.emissive_prim_areas = upload_f32(built.emissive_prim_areas);
     f32 total_area = 0.f;
-    for (u32 i = 0; i < scene.emissive_count; ++i) {
-      eids_h(i) = built.emissive_prim_ids[i];
-      eareas_h(i) = built.emissive_prim_areas[i];
-      total_area += built.emissive_prim_areas[i];
-    }
+    for (f32 area : built.emissive_prim_areas)
+      total_area += area;
     scene.total_emissive_area = total_area;
-    Kokkos::deep_copy(scene.emissive_prim_ids, eids_h);
-    Kokkos::deep_copy(scene.emissive_prim_areas, eareas_h);
   }
 
   const std::vector<Light> lights_cpu = derive_pbrt_area_lights(
@@ -528,11 +493,7 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
 
   if (!lights_cpu.empty()) {
     scene.light_count = u32(lights_cpu.size());
-    scene.lights = Kokkos::View<Light *>("lights", scene.light_count);
-    auto lights_h = Kokkos::create_mirror_view(scene.lights);
-    for (u32 i = 0; i < scene.light_count; ++i)
-      lights_h(i) = lights_cpu[i];
-    Kokkos::deep_copy(scene.lights, lights_h);
+    scene.lights = upload_lights(lights_cpu);
   }
 
   if (auto env = build_pbrt_env_map(pbrt, base_dir))

@@ -33,6 +33,7 @@ set(PHOTON_CUDA_SOURCES
   photon/pt/bvh/bvh.cpp
   photon/pt/scene.cpp
   photon/pt/scene/builder.cpp
+  photon/pt/scene/upload.cpp
   photon/pt/environment_map.cpp
   photon/pt/denoiser.cpp
   photon/pt/backend/kokkos_backend.cpp
@@ -110,6 +111,7 @@ target_sources(anari_library_photon
     ${PROJECT_SOURCE_DIR}/include/photon/pt/texture.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/scene.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/scene/builder.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/scene/upload.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/sphere.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/backend/ray_backend.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/backend/kokkos_backend.h
