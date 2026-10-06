@@ -159,6 +159,19 @@ struct Mat4
   }
 };
 
+struct TransformedTriangle
+{
+  Vec3 p0;
+  Vec3 p1;
+  Vec3 p2;
+};
+
+KOKKOS_FUNCTION inline TransformedTriangle transform_triangle(
+    const Mat4 &m, const Vec3 &p0, const Vec3 &p1, const Vec3 &p2)
+{
+  return {m.transform_point(p0), m.transform_point(p1), m.transform_point(p2)};
+}
+
 // Build a Mat4 from a column-major float[16] (the layout PBRT/ANARI use for
 // stored transforms). Written once here so transform-application code never
 // re-derives the element mapping.

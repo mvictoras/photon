@@ -60,6 +60,7 @@ struct FlatMesh {
   std::vector<Vec3> normals;
   std::vector<Vec2> texcoords;
   std::vector<u32> material_ids;
+  bool has_texcoords{false};
 
   void add_triangle(const Vec3 &p0, const Vec3 &p1, const Vec3 &p2,
                     const Vec3 &n0, const Vec3 &n1, const Vec3 &n2,
@@ -73,11 +74,10 @@ struct FlatMesh {
     normals.push_back(n0);
     normals.push_back(n1);
     normals.push_back(n2);
-    if (has_uvs) {
-      texcoords.push_back(uv0);
-      texcoords.push_back(uv1);
-      texcoords.push_back(uv2);
-    }
+    has_texcoords = has_texcoords || has_uvs;
+    texcoords.push_back(uv0);
+    texcoords.push_back(uv1);
+    texcoords.push_back(uv2);
     indices.push_back(base + 0);
     indices.push_back(base + 1);
     indices.push_back(base + 2);
@@ -160,15 +160,19 @@ FlatInstancedMesh flatten_instanced_geometry(const Scene &scene,
       const int i1 = obj.indices[t * 3 + 1];
       const int i2 = obj.indices[t * 3 + 2];
 
-      Vec3 p0 = xfm.transform_point({obj.positions[i0 * 3], obj.positions[i0 * 3 + 1], obj.positions[i0 * 3 + 2]});
-      Vec3 p1 = xfm.transform_point({obj.positions[i1 * 3], obj.positions[i1 * 3 + 1], obj.positions[i1 * 3 + 2]});
-      Vec3 p2 = xfm.transform_point({obj.positions[i2 * 3], obj.positions[i2 * 3 + 1], obj.positions[i2 * 3 + 2]});
+      const TransformedTriangle points = transform_triangle(xfm,
+          {obj.positions[i0 * 3], obj.positions[i0 * 3 + 1], obj.positions[i0 * 3 + 2]},
+          {obj.positions[i1 * 3], obj.positions[i1 * 3 + 1], obj.positions[i1 * 3 + 2]},
+          {obj.positions[i2 * 3], obj.positions[i2 * 3 + 1], obj.positions[i2 * 3 + 2]});
+      const Vec3 p0 = points.p0;
+      const Vec3 p1 = points.p1;
+      const Vec3 p2 = points.p2;
 
       Vec3 n0, n1, n2;
       if (has_normals) {
-        n0 = normalize(xfm.transform_direction({obj.normals[i0 * 3], obj.normals[i0 * 3 + 1], obj.normals[i0 * 3 + 2]}));
-        n1 = normalize(xfm.transform_direction({obj.normals[i1 * 3], obj.normals[i1 * 3 + 1], obj.normals[i1 * 3 + 2]}));
-        n2 = normalize(xfm.transform_direction({obj.normals[i2 * 3], obj.normals[i2 * 3 + 1], obj.normals[i2 * 3 + 2]}));
+        n0 = normalize(xfm.transform_normal({obj.normals[i0 * 3], obj.normals[i0 * 3 + 1], obj.normals[i0 * 3 + 2]}));
+        n1 = normalize(xfm.transform_normal({obj.normals[i1 * 3], obj.normals[i1 * 3 + 1], obj.normals[i1 * 3 + 2]}));
+        n2 = normalize(xfm.transform_normal({obj.normals[i2 * 3], obj.normals[i2 * 3 + 1], obj.normals[i2 * 3 + 2]}));
       } else {
         Vec3 face_n = normalize(cross(p1 - p0, p2 - p0));
         n0 = n1 = n2 = face_n;
@@ -195,7 +199,7 @@ FlatInstancedMesh flatten_instanced_geometry(const Scene &scene,
   tm.indices      = Kokkos::View<u32 *>("flat_idx", nt * 3);
   tm.normals      = Kokkos::View<Vec3 *>("flat_nrm", nv);
   tm.material_ids = Kokkos::View<u32 *>("flat_mat", nt);
-  if (flat.texcoords.size() >= nv * 2)
+  if (flat.has_texcoords)
     tm.texcoords  = Kokkos::View<Vec2 *>("flat_uv", nv);
 
   auto pos_h = Kokkos::create_mirror_view(tm.positions);

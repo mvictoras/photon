@@ -56,28 +56,32 @@ struct RayBackend {
   // flattens the instances into a single flat TriangleMesh on the CPU
   // (never silently dropping geometry) and builds the flat path. Backends
   // with native two-level BVH support override this.
-  virtual void build_accel_instanced(const Scene &scene,
+  virtual void build_accel_instanced(Scene &scene,
                                      const InstancedGeometry &instanced) {
     if (instanced.empty()) {
       build_accel(scene);
       return;
     }
-    Scene flat = scene;
     const FlatInstancedMesh flattened = flatten_instanced_geometry(scene, instanced);
-    flat.mesh = flattened.mesh;
-    flat.bvh = Bvh::build_cpu(flat.mesh);
+    scene.mesh = flattened.mesh;
+    scene.bvh = Bvh::build_cpu(scene.mesh);
     if (!flattened.emissive_prim_ids.empty()) {
-      flat.emissive_prim_ids = upload_u32(flattened.emissive_prim_ids);
-      flat.emissive_prim_areas = upload_f32(flattened.emissive_prim_areas);
-      flat.emissive_count = u32(flattened.emissive_prim_ids.size());
-      flat.total_emissive_area = 0.f;
+      scene.emissive_prim_ids = upload_u32(flattened.emissive_prim_ids);
+      scene.emissive_prim_areas = upload_f32(flattened.emissive_prim_areas);
+      scene.emissive_count = u32(flattened.emissive_prim_ids.size());
+      scene.total_emissive_area = 0.f;
       for (f32 area : flattened.emissive_prim_areas)
-        flat.total_emissive_area += area;
+        scene.total_emissive_area += area;
+    } else {
+      scene.emissive_prim_ids = {};
+      scene.emissive_prim_areas = {};
+      scene.emissive_count = 0;
+      scene.total_emissive_area = 0.f;
     }
     std::fprintf(stderr,
         "[photon] %s: no IAS support — flattened %zu instances into %u triangles\n",
-        name(), instanced.instances.size(), flat.mesh.triangle_count());
-    build_accel(flat);
+        name(), instanced.instances.size(), scene.mesh.triangle_count());
+    build_accel(scene);
   }
 
   virtual void trace_closest(const RayBatch &rays, HitBatch &hits) = 0;

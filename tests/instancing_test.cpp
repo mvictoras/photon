@@ -75,17 +75,45 @@ int main(int argc, char **argv)
     assert(std::abs(flattened.emissive_prim_areas[0] - 0.5f) < 1e-4f);
 
     auto flat_pos = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, flat.positions);
+    auto flat_uv = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, flat.texcoords);
+    assert(flat_uv.extent(0) == flat_pos.extent(0));
+    assert(std::abs(flat_uv(12).x - 0.f) < 1e-5f);
+    assert(std::abs(flat_uv(15).x - 1.f) < 1e-5f);
     // Object 0's triangle lands at the origin (vertices 12..14).
     assert(std::abs(flat_pos(12).x - 0.f) < 1e-5f);
     // Object 1 is translated by +10 in x (vertices 15..17).
     assert(std::abs(flat_pos(15).x - 10.f) < 1e-5f);
     assert(std::abs(flat_pos(15).z - 1.f) < 1e-5f);
 
+    // Non-uniform scale must use the inverse-transpose normal transform.
+    InstancedGeometry scaled;
+    ObjectMesh normal_obj;
+    normal_obj.positions = {0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f};
+    normal_obj.indices = {0, 1, 2};
+    const float diagonal = 0.70710678f;
+    normal_obj.normals = {diagonal, diagonal, 0.f, diagonal, diagonal, 0.f,
+                          diagonal, diagonal, 0.f};
+    scaled.objects.push_back(normal_obj);
+    Instance scaled_instance{};
+    scaled_instance.transform[0] = 2.f;
+    scaled.instances.push_back(scaled_instance);
+    Scene empty_scene;
+    auto scaled_flat = flatten_instanced_geometry(empty_scene, scaled);
+    auto scaled_normals = Kokkos::create_mirror_view_and_copy(
+        Kokkos::HostSpace{}, scaled_flat.mesh.normals);
+    const float expected_nx = 0.4472136f;
+    const float expected_ny = 0.8944272f;
+    assert(std::abs(scaled_normals(0).x - expected_nx) < 1e-4f);
+    assert(std::abs(scaled_normals(0).y - expected_ny) < 1e-4f);
+
     // Through the backend interface: KokkosBackend has no IAS support, so
     // build_accel_instanced must flatten (rendering, not dropping).
     auto backend = std::make_unique<KokkosBackend>();
     assert(backend->supports_instancing() == false);
     backend->build_accel_instanced(scene, ig);
+    assert(scene.mesh.has_texcoords());
+    assert(scene.emissive_count == 1);
+    assert(scene.emissive_prim_ids.extent(0) == 1);
 
     RayBatch rays;
     rays.count = 3;

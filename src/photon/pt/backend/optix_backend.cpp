@@ -657,7 +657,7 @@ void OptixBackend::build_ias(const std::vector<ObjectGAS> &gas_list,
       top_level_instances.size(), instances.size());
 }
 
-void OptixBackend::build_accel_instanced(const Scene &scene,
+void OptixBackend::build_accel_instanced(Scene &scene,
     const InstancedGeometry &instanced)
 {
   if (instanced.empty()) {

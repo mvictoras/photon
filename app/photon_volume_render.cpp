@@ -239,8 +239,9 @@ int main(int argc, char **argv)
       for (int x = 0; x < width; ++x)
         fb_h(y, x) = fb_h(y, x) * inv_spp;
 
-    photon::pt::io::write_ppm(output, reinterpret_cast<const float *>(fb_h.data()),
-        uint32_t(width), uint32_t(height), exposure);
+    photon::pt::io::write_ppm(output,
+        photon::pt::io::RgbImageView{reinterpret_cast<const float *>(fb_h.data()),
+                                     uint32_t(width), uint32_t(height)}, exposure);
     std::fprintf(stderr, "Output: %s\n", output.c_str());
   }
   Kokkos::finalize();

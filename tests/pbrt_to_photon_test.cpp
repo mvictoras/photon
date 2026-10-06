@@ -218,6 +218,7 @@ int main(int argc, char **argv)
       PbrtMeshBuild built;
       built.emissive_prim_ids = {0, 1};
       built.emissive_prim_areas = {0.5f, 0.5f};
+      built.emissive_meshes.push_back({0, 2, 1.f});
       built.total_emissive_area = 1.f;
 
       auto lights = derive_pbrt_area_lights(pbrt, built);
@@ -231,6 +232,25 @@ int main(int argc, char **argv)
       assert(approx(l.area, 1.f));
       assert(l.mesh_prim_count == 2);
       assert(approx3(l.color, {3.f, 1.f, 2.f}));
+
+      // Each emissive mesh must retain its own primitive range and area.
+      PbrtScene two_meshes;
+      PbrtTriMesh emitter2 = make_square_mesh();
+      emitter2.is_emissive = true;
+      emitter2.emission = {1.f, 4.f, 2.f};
+      float translate[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 10,0,0,1};
+      std::memcpy(emitter2.transform, translate, sizeof(translate));
+      two_meshes.meshes = {emitter, emitter2};
+      PbrtMeshBuild two_mesh_build;
+      two_mesh_build.emissive_meshes = {{0, 2, 1.f}, {2, 2, 1.f}};
+      auto two_lights = derive_pbrt_area_lights(two_meshes, two_mesh_build);
+      assert(two_lights.size() == 2);
+      assert(two_lights[0].mesh_prim_begin == 0);
+      assert(two_lights[1].mesh_prim_begin == 2);
+      assert(two_lights[0].mesh_prim_count == 2);
+      assert(two_lights[1].mesh_prim_count == 2);
+      assert(approx(two_lights[0].area, 1.f));
+      assert(approx(two_lights[1].area, 1.f));
     }
 
     // ---- build_pbrt_env_map -------------------------------------------

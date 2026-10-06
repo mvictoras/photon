@@ -190,17 +190,8 @@ int main(int argc, char **argv)
 
     if (rank == 0) {
       std::fprintf(stderr, "Composited in %.1f ms\n", composite_ms);
-      // De-interleave composited pixels into an RGB row-major buffer for the
-      // shared PPM writer.
-      std::vector<float> rgb(size_t(w) * h * 3);
-      for (uint32_t y = 0; y < h; ++y)
-        for (uint32_t x = 0; x < w; ++x) {
-          const Pixel &p = final_pixels[size_t(y) * w + x];
-          rgb[(size_t(y) * w + x) * 3 + 0] = p.r;
-          rgb[(size_t(y) * w + x) * 3 + 1] = p.g;
-          rgb[(size_t(y) * w + x) * 3 + 2] = p.b;
-        }
-      photon::pt::io::write_ppm(args.output, rgb.data(), w, h, args.exposure);
+      const auto rgb = photon::pt::io::rgb_image_from_pixels(final_pixels, w, h);
+      photon::pt::io::write_ppm(args.output, rgb, args.exposure);
       std::fprintf(stderr, "Output: %s\n", args.output.c_str());
     }
   }

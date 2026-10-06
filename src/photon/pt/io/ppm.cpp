@@ -19,8 +19,18 @@ unsigned char to_u8(float v)
 
 } // anonymous namespace
 
-void write_ppm(const std::string &path, const float *rgb, u32 width, u32 height,
-               f32 exposure)
+RgbImage rgb_image_from_rgba(const float *rgba, u32 width, u32 height)
+{
+  RgbImage image{width, height, std::vector<float>(size_t(width) * height * 3)};
+  for (size_t i = 0; i < size_t(width) * height; ++i) {
+    image.pixels[i * 3 + 0] = rgba[i * 4 + 0];
+    image.pixels[i * 3 + 1] = rgba[i * 4 + 1];
+    image.pixels[i * 3 + 2] = rgba[i * 4 + 2];
+  }
+  return image;
+}
+
+void write_ppm(const std::string &path, const RgbImageView &image, f32 exposure)
 {
   std::ofstream out(path, std::ios::binary);
   if (!out) {
@@ -28,12 +38,12 @@ void write_ppm(const std::string &path, const float *rgb, u32 width, u32 height,
     return;
   }
 
-  out << "P6\n" << width << " " << height << "\n255\n";
+  out << "P6\n" << image.width << " " << image.height << "\n255\n";
 
-  std::vector<unsigned char> row(size_t(width) * 3);
-  for (u32 y = 0; y < height; ++y) {
-    for (u32 x = 0; x < width; ++x) {
-      const float *px = rgb + (size_t(y) * width + size_t(x)) * 3;
+  std::vector<unsigned char> row(size_t(image.width) * 3);
+  for (u32 y = 0; y < image.height; ++y) {
+    for (u32 x = 0; x < image.width; ++x) {
+      const float *px = image.pixels + (size_t(y) * image.width + size_t(x)) * 3;
       const Vec3 c = gamma_correct(aces_tonemap(Vec3{px[0], px[1], px[2]} * exposure));
       row[3 * x + 0] = to_u8(c.x);
       row[3 * x + 1] = to_u8(c.y);
@@ -43,11 +53,11 @@ void write_ppm(const std::string &path, const float *rgb, u32 width, u32 height,
   }
 }
 
-void write_ppm(const std::string &path, const RenderResult &result, u32 width,
-               u32 height, f32 exposure)
+void write_ppm(const std::string &path, const RenderResult &result, f32 exposure)
 {
   auto color_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.color);
-  write_ppm(path, reinterpret_cast<const float *>(color_host.data()), width, height, exposure);
+  write_ppm(path, RgbImageView{reinterpret_cast<const float *>(color_host.data()),
+                               u32(result.color.extent(1)), u32(result.color.extent(0))}, exposure);
 }
 
 } // namespace photon::pt::io

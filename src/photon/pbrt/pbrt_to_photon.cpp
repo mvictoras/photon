@@ -214,15 +214,21 @@ PbrtMeshBuild build_pbrt_triangle_mesh(
 
     const size_t ntris = mesh.indices.size() / 3;
     const bool has_normals = mesh.normals.size() >= mesh.positions.size();
+    const u32 mesh_first_prim = u32(tri_off);
+    f32 mesh_emissive_area = 0.f;
 
     for (size_t t = 0; t < ntris; ++t) {
       const int i0 = mesh.indices[t * 3 + 0];
       const int i1 = mesh.indices[t * 3 + 1];
       const int i2 = mesh.indices[t * 3 + 2];
 
-      Vec3 p0 = xfm.transform_point({mesh.positions[i0*3], mesh.positions[i0*3+1], mesh.positions[i0*3+2]});
-      Vec3 p1 = xfm.transform_point({mesh.positions[i1*3], mesh.positions[i1*3+1], mesh.positions[i1*3+2]});
-      Vec3 p2 = xfm.transform_point({mesh.positions[i2*3], mesh.positions[i2*3+1], mesh.positions[i2*3+2]});
+      const TransformedTriangle points = transform_triangle(xfm,
+          {mesh.positions[i0*3], mesh.positions[i0*3+1], mesh.positions[i0*3+2]},
+          {mesh.positions[i1*3], mesh.positions[i1*3+1], mesh.positions[i1*3+2]},
+          {mesh.positions[i2*3], mesh.positions[i2*3+1], mesh.positions[i2*3+2]});
+      const Vec3 p0 = points.p0;
+      const Vec3 p1 = points.p1;
+      const Vec3 p2 = points.p2;
 
       pos_h(vert_off + 0) = p0;
       pos_h(vert_off + 1) = p1;
@@ -236,9 +242,9 @@ PbrtMeshBuild build_pbrt_triangle_mesh(
         Vec3 n0 = {mesh.normals[i0*3], mesh.normals[i0*3+1], mesh.normals[i0*3+2]};
         Vec3 n1 = {mesh.normals[i1*3], mesh.normals[i1*3+1], mesh.normals[i1*3+2]};
         Vec3 n2 = {mesh.normals[i2*3], mesh.normals[i2*3+1], mesh.normals[i2*3+2]};
-        nrm_h(vert_off + 0) = normalize(xfm.transform_direction(n0));
-        nrm_h(vert_off + 1) = normalize(xfm.transform_direction(n1));
-        nrm_h(vert_off + 2) = normalize(xfm.transform_direction(n2));
+        nrm_h(vert_off + 0) = normalize(xfm.transform_normal(n0));
+        nrm_h(vert_off + 1) = normalize(xfm.transform_normal(n1));
+        nrm_h(vert_off + 2) = normalize(xfm.transform_normal(n2));
       } else {
         Vec3 face_n = normalize(cross(p1 - p0, p2 - p0));
         nrm_h(vert_off + 0) = face_n;
@@ -259,11 +265,16 @@ PbrtMeshBuild build_pbrt_triangle_mesh(
         out.emissive_prim_ids.push_back(u32(tri_off));
         f32 area = 0.5f * length(cross(p1 - p0, p2 - p0));
         out.emissive_prim_areas.push_back(area);
+        mesh_emissive_area += area;
         out.total_emissive_area += area;
       }
 
       vert_off += 3;
       tri_off += 1;
+    }
+
+    if (mesh.is_emissive && ntris > 0) {
+      out.emissive_meshes.push_back({mesh_first_prim, u32(ntris), mesh_emissive_area});
     }
   }
 
@@ -283,33 +294,38 @@ std::vector<Light> derive_pbrt_area_lights(const PbrtScene &pbrt,
 {
   std::vector<Light> lights;
 
+  size_t emissive_mesh_index = 0;
   for (const auto &mesh : pbrt.meshes) {
     if (!mesh.is_emissive)
       continue;
 
     const size_t ntris = mesh.indices.size() / 3;
-    u32 first_prim = built.emissive_prim_ids.empty() ? 0 : built.emissive_prim_ids[0];
+    if (ntris == 0 || emissive_mesh_index >= built.emissive_meshes.size())
+      continue;
+    const auto &range = built.emissive_meshes[emissive_mesh_index++];
 
     // Corner extraction: p0, p1 from the first triangle's first two indices,
     // p3 from its third index when present — forming the light quad edges.
     const Mat4 xfm = mat4_from_column_major(mesh.transform);
-    auto corner = [&](int idx) {
-      return xfm.transform_point({mesh.positions[idx*3], mesh.positions[idx*3+1], mesh.positions[idx*3+2]});
+    const auto vertex = [&](int idx) {
+      return Vec3{mesh.positions[idx*3], mesh.positions[idx*3+1], mesh.positions[idx*3+2]};
     };
-    Vec3 p0 = corner(mesh.indices[0]);
-    Vec3 p1 = corner(mesh.indices[1]);
-    Vec3 p3 = mesh.indices.size() >= 6 ? corner(mesh.indices[5]) : p0;
+    const auto corners = transform_triangle(xfm, vertex(mesh.indices[0]),
+        vertex(mesh.indices[1]), vertex(mesh.indices.size() >= 6 ? mesh.indices[5] : mesh.indices[2]));
+    const Vec3 p0 = corners.p0;
+    const Vec3 p1 = corners.p1;
+    const Vec3 p3 = corners.p2;
 
     Light l{};
     l.type = LightType::Area;
     l.position = p0;
     l.edge1 = p1 - p0;
     l.edge2 = p3 - p0;
-    l.area = built.total_emissive_area;
+    l.area = range.area;
     l.color = {mesh.emission.x, mesh.emission.y, mesh.emission.z};
     l.intensity = 1.f;
-    l.mesh_prim_begin = first_prim;
-    l.mesh_prim_count = u32(ntris);
+    l.mesh_prim_begin = range.first_prim;
+    l.mesh_prim_count = range.prim_count;
     Vec3 cr = cross(l.edge1, l.edge2);
     l.direction = length(cr) > 0.f ? cr * (1.f / length(cr)) : Vec3{0.f, -1.f, 0.f};
     lights.push_back(l);

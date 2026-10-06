@@ -304,7 +304,8 @@ int main(int argc, char **argv)
     }
 
     photon::pt::io::write_ppm(args.output,
-        reinterpret_cast<const float *>(color_h.data()), W, H, args.exposure);
+        photon::pt::io::RgbImageView{reinterpret_cast<const float *>(color_h.data()), W, H},
+        args.exposure);
     std::fprintf(stderr, "Output: %s\n", args.output.c_str());
   }
   Kokkos::finalize();

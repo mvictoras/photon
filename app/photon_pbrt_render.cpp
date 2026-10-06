@@ -147,7 +147,7 @@ int main(int argc, char **argv)
       }
     }
 
-    photon::pt::io::write_ppm(args.output, result, uint32_t(pbrt_scene.width), uint32_t(pbrt_scene.height), args.exposure);
+    photon::pt::io::write_ppm(args.output, result, args.exposure);
     std::fprintf(stderr, "Output: %s\n", args.output.c_str());
   }
   Kokkos::finalize();

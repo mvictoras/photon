@@ -609,19 +609,6 @@ void apply_transform(SurfaceGeometry &sg, const photon::pt::Mat4 &xfm)
     p = xfm.transform_point(p);
 }
 
-// ─── Read column-major float[16] into row-major Mat4 ────────────────────────
-// ANARI uses column-major matrices (OpenGL style): m[col][row]
-// Our Mat4 is row-major: m[row][col]
-
-photon::pt::Mat4 mat4_from_column_major(const float *cm)
-{
-  photon::pt::Mat4 m{};
-  for (int col = 0; col < 4; ++col)
-    for (int row = 0; row < 4; ++row)
-      m.m[row][col] = cm[col * 4 + row];
-  return m;
-}
-
 // ─── Build the final merged scene ───────────────────────────────────────────
 
 void merge_surfaces_to_mesh(const std::vector<SurfaceGeometry> &surfaces,
@@ -817,7 +804,7 @@ std::optional<photon::pt::Scene> build_scene_from_anari(ANARIWorld world, const 
         photon::pt::Mat4 xfm = photon::pt::Mat4::identity();
         float xfm_raw[16];
         if (read_param(inst_obj, "transform", xfm_raw)) {
-          xfm = mat4_from_column_major(xfm_raw);
+          xfm = photon::pt::mat4_from_column_major(xfm_raw);
         }
 
         // Get the group

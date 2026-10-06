@@ -17,7 +17,7 @@ struct OptixBackend : RayBackend {
 
   void build_accel(const Scene &scene) override;
   bool supports_instancing() const override { return true; }
-  void build_accel_instanced(const Scene &scene,
+  void build_accel_instanced(Scene &scene,
                               const InstancedGeometry &instanced) override;
   void trace_closest(const RayBatch &rays, HitBatch &hits) override;
   void trace_occluded(const RayBatch &rays, Kokkos::View<u32 *> occluded) override;

@@ -113,6 +113,7 @@ target_sources(anari_library_photon
     ${PROJECT_SOURCE_DIR}/include/photon/pt/scene.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/scene/builder.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/scene/upload.h
+    ${PROJECT_SOURCE_DIR}/include/photon/pt/io/ppm.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/sphere.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/backend/ray_backend.h
     ${PROJECT_SOURCE_DIR}/include/photon/pt/backend/kokkos_backend.h
@@ -200,4 +201,3 @@ if(PHOTON_OIDN_READY)
     target_link_libraries(anari_library_photon PUBLIC ${PHOTON_OIDN_LIB})
   endif()
 endif()
-

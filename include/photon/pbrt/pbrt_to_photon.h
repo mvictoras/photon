@@ -46,9 +46,16 @@ std::map<std::string, photon::pt::u32> convert_pbrt_materials(
     std::vector<photon::pt::Material> &out_materials);
 
 struct PbrtMeshBuild {
+  struct EmissiveMesh {
+    photon::pt::u32 first_prim{0};
+    photon::pt::u32 prim_count{0};
+    photon::pt::f32 area{0.f};
+  };
+
   photon::pt::TriangleMesh mesh;  // empty (0 triangles) for instanced-only scenes
   std::vector<photon::pt::u32> emissive_prim_ids;
   std::vector<photon::pt::f32> emissive_prim_areas;
+  std::vector<EmissiveMesh> emissive_meshes;
   photon::pt::f32 total_emissive_area{0.f};  // sum of emissive_prim_areas
 };
 

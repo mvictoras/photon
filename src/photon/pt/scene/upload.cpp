@@ -2,48 +2,40 @@
 
 namespace photon::pt {
 
-Kokkos::View<Material *> upload_materials(const std::vector<Material> &materials)
+namespace {
+
+template <typename T>
+Kokkos::View<T *> upload_values(const std::vector<T> &values, const char *label)
 {
-  const u32 count = u32(materials.size());
-  Kokkos::View<Material *> out("materials", count);
+  const u32 count = u32(values.size());
+  Kokkos::View<T *> out(label, count);
   auto host = Kokkos::create_mirror_view(out);
   for (u32 i = 0; i < count; ++i)
-    host(i) = materials[i];
+    host(i) = values[i];
   Kokkos::deep_copy(out, host);
   return out;
+}
+
+} // anonymous namespace
+
+Kokkos::View<Material *> upload_materials(const std::vector<Material> &materials)
+{
+  return upload_values(materials, "materials");
 }
 
 Kokkos::View<Light *> upload_lights(const std::vector<Light> &lights)
 {
-  const u32 count = u32(lights.size());
-  Kokkos::View<Light *> out("lights", count);
-  auto host = Kokkos::create_mirror_view(out);
-  for (u32 i = 0; i < count; ++i)
-    host(i) = lights[i];
-  Kokkos::deep_copy(out, host);
-  return out;
+  return upload_values(lights, "lights");
 }
 
 Kokkos::View<u32 *> upload_u32(const std::vector<u32> &values)
 {
-  const u32 count = u32(values.size());
-  Kokkos::View<u32 *> out("u32_values", count);
-  auto host = Kokkos::create_mirror_view(out);
-  for (u32 i = 0; i < count; ++i)
-    host(i) = values[i];
-  Kokkos::deep_copy(out, host);
-  return out;
+  return upload_values(values, "u32_values");
 }
 
 Kokkos::View<f32 *> upload_f32(const std::vector<f32> &values)
 {
-  const u32 count = u32(values.size());
-  Kokkos::View<f32 *> out("f32_values", count);
-  auto host = Kokkos::create_mirror_view(out);
-  for (u32 i = 0; i < count; ++i)
-    host(i) = values[i];
-  Kokkos::deep_copy(out, host);
-  return out;
+  return upload_values(values, "f32_values");
 }
 
 TextureAtlas upload_texture_atlas(const std::vector<AtlasImage> &images)

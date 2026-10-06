@@ -472,17 +472,9 @@ int main(int argc, char **argv)
     if (rank == 0 && !icetImageIsNull(icet_image)) {
       const IceTFloat *composited_color = icetImageGetColorcf(icet_image);
       std::fprintf(stderr, "Writing %s...\n", output.c_str());
-      // De-interleave the RGBA composite into an RGB row-major buffer for
-      // the shared PPM writer.
-      std::vector<float> rgb(size_t(width) * height * 3);
-      for (int y = 0; y < height; ++y)
-        for (int x = 0; x < width; ++x) {
-          const int idx = y * width + x;
-          rgb[(size_t(y) * width + x) * 3 + 0] = float(composited_color[idx*4+0]);
-          rgb[(size_t(y) * width + x) * 3 + 1] = float(composited_color[idx*4+1]);
-          rgb[(size_t(y) * width + x) * 3 + 2] = float(composited_color[idx*4+2]);
-        }
-      photon::pt::io::write_ppm(output, rgb.data(), uint32_t(width), uint32_t(height), exposure);
+      const auto rgb = photon::pt::io::rgb_image_from_rgba(composited_color,
+          uint32_t(width), uint32_t(height));
+      photon::pt::io::write_ppm(output, rgb, exposure);
       std::fprintf(stderr, "Output: %s\n", output.c_str());
     }
 
@@ -515,17 +507,9 @@ int main(int argc, char **argv)
 
     if (rank == 0) {
       std::fprintf(stderr, "Writing %s...\n", output.c_str());
-      // De-interleave composited pixels into an RGB row-major buffer for the
-      // shared PPM writer.
-      std::vector<float> rgb(size_t(width) * height * 3);
-      for (int y = 0; y < height; ++y)
-        for (int x = 0; x < width; ++x) {
-          const Pixel &p = final_pixels[size_t(y) * width + x];
-          rgb[(size_t(y) * width + x) * 3 + 0] = p.r;
-          rgb[(size_t(y) * width + x) * 3 + 1] = p.g;
-          rgb[(size_t(y) * width + x) * 3 + 2] = p.b;
-        }
-      photon::pt::io::write_ppm(output, rgb.data(), uint32_t(width), uint32_t(height), exposure);
+      const auto rgb = photon::pt::io::rgb_image_from_pixels(final_pixels,
+          uint32_t(width), uint32_t(height));
+      photon::pt::io::write_ppm(output, rgb, exposure);
       std::fprintf(stderr, "Output: %s\n", output.c_str());
     }
 #endif
