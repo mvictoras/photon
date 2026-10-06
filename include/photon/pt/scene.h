@@ -55,4 +55,18 @@ struct Scene {
   u32 emissive_count{0};
 };
 
+// Marshal a format-agnostic ObjectMesh into a GPU TriangleMesh.
+// Pure CPU-side data transform (Kokkos views only, no backend API) so it can
+// be called and unit-tested from a CPU-only build without CUDA/OptiX.
+// Positions, indices, normals and UVs are copied; material_ids are filled
+// with the object's single material_id per triangle.
+TriangleMesh object_mesh_to_triangle_mesh(const ObjectMesh &obj);
+
+// CPU-side flattening fallback for backends without two-level BVH support:
+// transforms each instance's referenced ObjectMesh into world space and
+// appends it (together with the scene-level mesh) into a single flat
+// TriangleMesh. Slower than a true IAS but never silently drops geometry.
+TriangleMesh flatten_instanced_geometry(const Scene &scene,
+                                        const InstancedGeometry &instanced);
+
 } // namespace photon::pt

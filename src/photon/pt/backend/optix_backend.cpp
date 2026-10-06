@@ -416,6 +416,13 @@ OptixTraversableHandle OptixBackend::build_gas_for_mesh(const TriangleMesh &mesh
     for (size_t i = 0; i < vc; ++i) nv[i] = make_float3(n_h(i).x, n_h(i).y, n_h(i).z);
     check_cuda(cudaMemcpy(reinterpret_cast<void*>(out.d_normals), nv.data(), vc*sizeof(float3), cudaMemcpyHostToDevice), "gas_n_cp");
   }
+  if (mesh.has_texcoords()) {
+    auto uv_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.texcoords);
+    check_cuda(cudaMalloc(reinterpret_cast<void**>(&out.d_texcoords), vc*sizeof(float2)), "gas_uv");
+    std::vector<float2> uvs(vc);
+    for (size_t i = 0; i < vc; ++i) uvs[i] = make_float2(uv_h(i).x, uv_h(i).y);
+    check_cuda(cudaMemcpy(reinterpret_cast<void*>(out.d_texcoords), uvs.data(), vc*sizeof(float2), cudaMemcpyHostToDevice), "gas_uv_cp");
+  }
   if (mesh.has_material_ids()) {
     auto m_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, mesh.material_ids);
     check_cuda(cudaMalloc(reinterpret_cast<void**>(&out.d_material_ids), tc*sizeof(unsigned int)), "gas_mat");
@@ -593,11 +600,11 @@ void OptixBackend::build_ias(const std::vector<ObjectGAS> &gas_list,
     mesh_table[oi].positions     = reinterpret_cast<float3 *>(gas_list[oi].d_positions);
     mesh_table[oi].indices       = reinterpret_cast<unsigned int *>(gas_list[oi].d_indices);
     mesh_table[oi].normals       = reinterpret_cast<float3 *>(gas_list[oi].d_normals);
-    mesh_table[oi].texcoords     = nullptr;
+    mesh_table[oi].texcoords     = reinterpret_cast<float2 *>(gas_list[oi].d_texcoords);
     mesh_table[oi].material_ids  = reinterpret_cast<unsigned int *>(gas_list[oi].d_material_ids);
     mesh_table[oi].vertex_colors = nullptr;
     mesh_table[oi].has_normals       = gas_list[oi].d_normals      ? 1 : 0;
-    mesh_table[oi].has_texcoords     = 0;
+    mesh_table[oi].has_texcoords     = gas_list[oi].d_texcoords   ? 1 : 0;
     mesh_table[oi].has_material_ids  = gas_list[oi].d_material_ids ? 1 : 0;
     mesh_table[oi].has_vertex_colors = 0;
   }
@@ -606,11 +613,11 @@ void OptixBackend::build_ias(const std::vector<ObjectGAS> &gas_list,
     se.positions     = reinterpret_cast<float3 *>(scene_gas->d_positions);
     se.indices       = reinterpret_cast<unsigned int *>(scene_gas->d_indices);
     se.normals       = reinterpret_cast<float3 *>(scene_gas->d_normals);
-    se.texcoords     = nullptr;
+    se.texcoords     = reinterpret_cast<float2 *>(scene_gas->d_texcoords);
     se.material_ids  = reinterpret_cast<unsigned int *>(scene_gas->d_material_ids);
     se.vertex_colors = nullptr;
     se.has_normals       = scene_gas->d_normals      ? 1 : 0;
-    se.has_texcoords     = 0;
+    se.has_texcoords     = scene_gas->d_texcoords    ? 1 : 0;
     se.has_material_ids  = scene_gas->d_material_ids ? 1 : 0;
     se.has_vertex_colors = 0;
   }
@@ -668,37 +675,9 @@ void OptixBackend::build_accel_instanced(const Scene &scene,
     const auto &obj = instanced.objects[oi];
     if (obj.indices.empty()) continue;
 
-    const uint64_t nv = obj.positions.size() / 3;
-    const uint64_t nt = obj.indices.size() / 3;
-    const bool has_normals = obj.normals.size() >= obj.positions.size();
-
-    TriangleMesh tm;
-    tm.positions    = Kokkos::View<Vec3*>("p", nv);
-    tm.indices      = Kokkos::View<u32*>("i", nt * 3);
-    tm.material_ids = Kokkos::View<u32*>("m", nt);
-    if (has_normals)
-      tm.normals    = Kokkos::View<Vec3*>("n", nv);
-
-    auto ph = Kokkos::create_mirror_view(tm.positions);
-    auto ih = Kokkos::create_mirror_view(tm.indices);
-    auto mh = Kokkos::create_mirror_view(tm.material_ids);
-    auto nh = has_normals ? Kokkos::create_mirror_view(tm.normals)
-                          : decltype(Kokkos::create_mirror_view(tm.normals)){};
-
-    for (uint64_t v = 0; v < nv; ++v)
-      ph(v) = {obj.positions[v*3], obj.positions[v*3+1], obj.positions[v*3+2]};
-    for (uint64_t i = 0; i < nt * 3; ++i)
-      ih(i) = u32(obj.indices[i]);
-    for (uint64_t t = 0; t < nt; ++t)
-      mh(t) = obj.material_id;
-    if (has_normals)
-      for (uint64_t v = 0; v < nv; ++v)
-        nh(v) = {obj.normals[v*3], obj.normals[v*3+1], obj.normals[v*3+2]};
-
-    Kokkos::deep_copy(tm.positions, ph);
-    Kokkos::deep_copy(tm.indices,   ih);
-    Kokkos::deep_copy(tm.material_ids, mh);
-    if (has_normals) Kokkos::deep_copy(tm.normals, nh);
+    // Positions, indices, normals AND UVs are marshaled here — dropping
+    // UVs would silently texture all instanced objects with texel (0,0).
+    TriangleMesh tm = object_mesh_to_triangle_mesh(obj);
     build_gas_for_mesh(tm, m_object_gas[oi]);
   }
 

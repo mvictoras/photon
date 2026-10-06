@@ -159,4 +159,16 @@ struct Mat4
   }
 };
 
+// Build a Mat4 from a column-major float[16] (the layout PBRT/ANARI use for
+// stored transforms). Written once here so transform-application code never
+// re-derives the element mapping.
+inline Mat4 mat4_from_column_major(const float *cm)
+{
+  Mat4 m{};
+  for (int col = 0; col < 4; ++col)
+    for (int row = 0; row < 4; ++row)
+      m.m[row][col] = cm[col * 4 + row];
+  return m;
+}
+
 }

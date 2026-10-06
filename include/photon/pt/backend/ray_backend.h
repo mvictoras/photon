@@ -2,10 +2,12 @@
 
 #include <Kokkos_Core.hpp>
 
+#include <cstdio>
 #include <memory>
 
 #include "photon/pt/math.h"
 #include "photon/pt/math_vec2.h"
+#include "photon/pt/scene.h"
 
 namespace photon::pt {
 
@@ -43,10 +45,31 @@ struct HitBatch {
 struct RayBackend {
   virtual ~RayBackend() = default;
   virtual void build_accel(const Scene &scene) = 0;
+
+  // Whether this backend builds true two-level acceleration structures
+  // (e.g. OptiX IAS). If false, build_accel_instanced() falls back to
+  // CPU-side flattening so instanced geometry is still rendered.
+  virtual bool supports_instancing() const { return false; }
+
+  // Handle a scene with instanced geometry. The default implementation
+  // flattens the instances into a single flat TriangleMesh on the CPU
+  // (never silently dropping geometry) and builds the flat path. Backends
+  // with native two-level BVH support override this.
   virtual void build_accel_instanced(const Scene &scene,
-                                      const InstancedGeometry & /*instanced*/) {
-    build_accel(scene);
+                                     const InstancedGeometry &instanced) {
+    if (instanced.empty()) {
+      build_accel(scene);
+      return;
+    }
+    Scene flat = scene;
+    flat.mesh = flatten_instanced_geometry(scene, instanced);
+    flat.bvh = Bvh::build_cpu(flat.mesh);
+    std::fprintf(stderr,
+        "[photon] %s: no IAS support — flattened %zu instances into %u triangles\n",
+        name(), instanced.instances.size(), flat.mesh.triangle_count());
+    build_accel(flat);
   }
+
   virtual void trace_closest(const RayBatch &rays, HitBatch &hits) = 0;
   virtual void trace_occluded(const RayBatch &rays, Kokkos::View<u32 *> occluded) = 0;
   virtual const char *name() const = 0;
