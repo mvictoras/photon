@@ -16,6 +16,7 @@
 #include "photon/pt/backend/ray_backend.h"
 #include "photon/pt/camera.h"
 #include "photon/pt/denoiser.h"
+#include "photon/pt/io/ppm.h"
 #include "photon/pt/light.h"
 #include "photon/pt/material.h"
 #include "photon/pt/math.h"
@@ -27,13 +28,6 @@
 namespace {
 
 using namespace photon::pt;
-
-static float aces_filmic(float x)
-{
-  const float a = 2.51f, b = 0.03f, c = 2.43f, d = 0.59f, e = 0.14f;
-  x = std::fmax(x, 0.f);
-  return std::fmin((x * (a * x + b)) / (x * (c * x + d) + e), 1.f);
-}
 
 enum class ScalarFieldType { Gyroid, Turbulence, Supernova };
 
@@ -478,23 +472,17 @@ int main(int argc, char **argv)
     if (rank == 0 && !icetImageIsNull(icet_image)) {
       const IceTFloat *composited_color = icetImageGetColorcf(icet_image);
       std::fprintf(stderr, "Writing %s...\n", output.c_str());
-      std::ofstream out(output, std::ios::binary);
-      out << "P6\n" << width << " " << height << "\n255\n";
-      std::vector<unsigned char> row(size_t(width) * 3);
-      for (int y = 0; y < height; ++y) {
+      // De-interleave the RGBA composite into an RGB row-major buffer for
+      // the shared PPM writer.
+      std::vector<float> rgb(size_t(width) * height * 3);
+      for (int y = 0; y < height; ++y)
         for (int x = 0; x < width; ++x) {
-          int idx = y * width + x;
-          auto to_u8 = [exposure](float v) -> unsigned char {
-            v = aces_filmic(v * exposure);
-            v = std::pow(v, 1.f / 2.2f);
-            return static_cast<unsigned char>(v * 255.f + 0.5f);
-          };
-          row[3*x]   = to_u8(composited_color[idx*4+0]);
-          row[3*x+1] = to_u8(composited_color[idx*4+1]);
-          row[3*x+2] = to_u8(composited_color[idx*4+2]);
+          const int idx = y * width + x;
+          rgb[(size_t(y) * width + x) * 3 + 0] = float(composited_color[idx*4+0]);
+          rgb[(size_t(y) * width + x) * 3 + 1] = float(composited_color[idx*4+1]);
+          rgb[(size_t(y) * width + x) * 3 + 2] = float(composited_color[idx*4+2]);
         }
-        out.write(reinterpret_cast<char*>(row.data()), std::streamsize(row.size()));
-      }
+      photon::pt::io::write_ppm(output, rgb.data(), uint32_t(width), uint32_t(height), exposure);
       std::fprintf(stderr, "Output: %s\n", output.c_str());
     }
 
@@ -527,23 +515,17 @@ int main(int argc, char **argv)
 
     if (rank == 0) {
       std::fprintf(stderr, "Writing %s...\n", output.c_str());
-      std::ofstream out(output, std::ios::binary);
-      out << "P6\n" << width << " " << height << "\n255\n";
-      std::vector<unsigned char> row(size_t(width) * 3);
-      for (int y = 0; y < height; ++y) {
+      // De-interleave composited pixels into an RGB row-major buffer for the
+      // shared PPM writer.
+      std::vector<float> rgb(size_t(width) * height * 3);
+      for (int y = 0; y < height; ++y)
         for (int x = 0; x < width; ++x) {
-          const Pixel &p = final_pixels[y * width + x];
-          auto to_u8 = [exposure](float v) -> unsigned char {
-            v = aces_filmic(v * exposure);
-            v = std::pow(v, 1.f / 2.2f);
-            return static_cast<unsigned char>(v * 255.f + 0.5f);
-          };
-          row[3*x]   = to_u8(p.r);
-          row[3*x+1] = to_u8(p.g);
-          row[3*x+2] = to_u8(p.b);
+          const Pixel &p = final_pixels[size_t(y) * width + x];
+          rgb[(size_t(y) * width + x) * 3 + 0] = p.r;
+          rgb[(size_t(y) * width + x) * 3 + 1] = p.g;
+          rgb[(size_t(y) * width + x) * 3 + 2] = p.b;
         }
-        out.write(reinterpret_cast<char*>(row.data()), std::streamsize(row.size()));
-      }
+      photon::pt::io::write_ppm(output, rgb.data(), uint32_t(width), uint32_t(height), exposure);
       std::fprintf(stderr, "Output: %s\n", output.c_str());
     }
 #endif

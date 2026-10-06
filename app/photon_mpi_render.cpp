@@ -13,17 +13,10 @@
 #include "photon/pbrt/pbrt_to_photon.h"
 #include "photon/pt/backend/ray_backend.h"
 #include "photon/pt/denoiser.h"
+#include "photon/pt/io/ppm.h"
 #include "photon/pt/pathtracer.h"
 
 namespace {
-
-// ACES filmic tone mapping (Narkowicz 2015 fit)
-static float aces_filmic(float x)
-{
-  const float a = 2.51f, b = 0.03f, c = 2.43f, d = 0.59f, e = 0.14f;
-  x = std::fmax(x, 0.f);
-  return std::fmin((x * (a * x + b)) / (x * (c * x + d) + e), 1.f);
-}
 
 struct Args {
   std::string scene_path;
@@ -74,31 +67,6 @@ void depth_composite_op(void *invec, void *inoutvec, int *len, MPI_Datatype *)
     if (in[i].depth > 0.f && (out[i].depth <= 0.f || in[i].depth < out[i].depth)) {
       out[i] = in[i];
     }
-  }
-}
-
-void write_ppm(const std::string &file, const std::vector<Pixel> &pixels,
-    uint32_t w, uint32_t h, float exposure)
-{
-  std::ofstream out(file, std::ios::binary);
-  out << "P6\n" << w << " " << h << "\n255\n";
-
-  std::vector<unsigned char> row(size_t(w) * 3);
-  for (uint32_t y = 0; y < h; ++y) {
-    for (uint32_t x = 0; x < w; ++x) {
-      const Pixel &p = pixels[y * w + x];
-
-      auto to_u8 = [exposure](float v) -> unsigned char {
-        v = aces_filmic(v * exposure);
-        v = std::pow(v, 1.f / 2.2f);
-        return static_cast<unsigned char>(v * 255.f + 0.5f);
-      };
-
-      row[3 * x + 0] = to_u8(p.r);
-      row[3 * x + 1] = to_u8(p.g);
-      row[3 * x + 2] = to_u8(p.b);
-    }
-    out.write(reinterpret_cast<const char *>(row.data()), std::streamsize(row.size()));
   }
 }
 
@@ -222,7 +190,17 @@ int main(int argc, char **argv)
 
     if (rank == 0) {
       std::fprintf(stderr, "Composited in %.1f ms\n", composite_ms);
-      write_ppm(args.output, final_pixels, w, h, args.exposure);
+      // De-interleave composited pixels into an RGB row-major buffer for the
+      // shared PPM writer.
+      std::vector<float> rgb(size_t(w) * h * 3);
+      for (uint32_t y = 0; y < h; ++y)
+        for (uint32_t x = 0; x < w; ++x) {
+          const Pixel &p = final_pixels[size_t(y) * w + x];
+          rgb[(size_t(y) * w + x) * 3 + 0] = p.r;
+          rgb[(size_t(y) * w + x) * 3 + 1] = p.g;
+          rgb[(size_t(y) * w + x) * 3 + 2] = p.b;
+        }
+      photon::pt::io::write_ppm(args.output, rgb.data(), w, h, args.exposure);
       std::fprintf(stderr, "Output: %s\n", args.output.c_str());
     }
   }

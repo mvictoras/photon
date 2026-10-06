@@ -15,6 +15,7 @@
 #include "photon/pt/denoiser.h"
 #include "photon/pt/disney_bsdf.h"
 #include "photon/pt/light.h"
+#include "photon/pt/io/ppm.h"
 #include "photon/pt/math.h"
 #include "photon/pt/pathtracer.h"
 #include "photon/pt/rng.h"
@@ -23,13 +24,6 @@
 namespace {
 
 using namespace photon::pt;
-
-static float aces_filmic(float x)
-{
-  const float a = 2.51f, b = 0.03f, c = 2.43f, d = 0.59f, e = 0.14f;
-  x = std::fmax(x, 0.f);
-  return std::fmin((x * (a * x + b)) / (x * (c * x + d) + e), 1.f);
-}
 
 struct Args {
   std::string scene_path;
@@ -309,21 +303,8 @@ int main(int argc, char **argv)
                         + splat_h(y * W + x) * (1.f / f32(spp));
     }
 
-    std::ofstream out(args.output, std::ios::binary);
-    out << "P6\n" << W << " " << H << "\n255\n";
-    std::vector<unsigned char> row(size_t(W) * 3);
-    for (u32 y = 0; y < H; ++y) {
-      for (u32 x = 0; x < W; ++x) {
-        Vec3 c = color_h(y, x);
-        auto to_u8 = [&](float v) -> unsigned char {
-          v = aces_filmic(v * args.exposure);
-          v = std::pow(v, 1.f / 2.2f);
-          return (unsigned char)(v * 255.f + 0.5f);
-        };
-        row[3*x] = to_u8(c.x); row[3*x+1] = to_u8(c.y); row[3*x+2] = to_u8(c.z);
-      }
-      out.write((char*)row.data(), W * 3);
-    }
+    photon::pt::io::write_ppm(args.output,
+        reinterpret_cast<const float *>(color_h.data()), W, H, args.exposure);
     std::fprintf(stderr, "Output: %s\n", args.output.c_str());
   }
   Kokkos::finalize();

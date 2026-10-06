@@ -13,6 +13,7 @@
 #include "photon/pbrt/pbrt_to_photon.h"
 #include "photon/pt/backend/ray_backend.h"
 #include "photon/pt/denoiser.h"
+#include "photon/pt/io/ppm.h"
 #include "photon/pt/pathtracer.h"
 
 namespace {
@@ -60,41 +61,6 @@ Args parse_args(int argc, char **argv)
       a.scene_path = arg;
   }
   return a;
-}
-
-// ACES filmic tone mapping (Narkowicz 2015 fit)
-static float aces_filmic(float x)
-{
-  const float a = 2.51f, b = 0.03f, c = 2.43f, d = 0.59f, e = 0.14f;
-  x = std::fmax(x, 0.f);
-  return std::fmin((x * (a * x + b)) / (x * (c * x + d) + e), 1.f);
-}
-
-void write_ppm(const std::string &file, const photon::pt::RenderResult &result,
-    uint32_t w, uint32_t h, float exposure = 1.f)
-{
-  auto color_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, result.color);
-
-  std::ofstream out(file, std::ios::binary);
-  out << "P6\n" << w << " " << h << "\n255\n";
-
-  std::vector<unsigned char> row(size_t(w) * 3);
-  for (uint32_t y = 0; y < h; ++y) {
-    for (uint32_t x = 0; x < w; ++x) {
-      auto c = color_host(y, x);
-
-      auto to_u8 = [exposure](float v) -> unsigned char {
-        v = aces_filmic(v * exposure);
-        v = std::pow(v, 1.f / 2.2f);
-        return static_cast<unsigned char>(v * 255.f + 0.5f);
-      };
-
-      row[3 * x + 0] = to_u8(c.x);
-      row[3 * x + 1] = to_u8(c.y);
-      row[3 * x + 2] = to_u8(c.z);
-    }
-    out.write(reinterpret_cast<const char *>(row.data()), std::streamsize(row.size()));
-  }
 }
 
 }
@@ -181,7 +147,7 @@ int main(int argc, char **argv)
       }
     }
 
-    write_ppm(args.output, result, uint32_t(pbrt_scene.width), uint32_t(pbrt_scene.height), args.exposure);
+    photon::pt::io::write_ppm(args.output, result, uint32_t(pbrt_scene.width), uint32_t(pbrt_scene.height), args.exposure);
     std::fprintf(stderr, "Output: %s\n", args.output.c_str());
   }
   Kokkos::finalize();

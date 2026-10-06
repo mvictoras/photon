@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "photon/pt/camera.h"
+#include "photon/pt/io/ppm.h"
 #include "photon/pt/math.h"
 #include "photon/pt/ray.h"
 #include "photon/pt/rng.h"
@@ -16,13 +17,6 @@
 namespace {
 
 using namespace photon::pt;
-
-static float aces_filmic(float x)
-{
-  const float a = 2.51f, b = 0.03f, c = 2.43f, d = 0.59f, e = 0.14f;
-  x = std::fmax(x, 0.f);
-  return std::fmin((x * (a * x + b)) / (x * (c * x + d) + e), 1.f);
-}
 
 float noise3d_smooth(float x, float y, float z)
 {
@@ -241,24 +235,12 @@ int main(int argc, char **argv)
 
     auto fb_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, framebuffer);
     float inv_spp = 1.f / float(spp);
+    for (int y = 0; y < height; ++y)
+      for (int x = 0; x < width; ++x)
+        fb_h(y, x) = fb_h(y, x) * inv_spp;
 
-    std::ofstream out(output, std::ios::binary);
-    out << "P6\n" << width << " " << height << "\n255\n";
-    std::vector<unsigned char> row(size_t(width) * 3);
-    for (int y = 0; y < height; ++y) {
-      for (int x = 0; x < width; ++x) {
-        Vec3 c = fb_h(y, x) * inv_spp;
-        auto to_u8 = [exposure](float v) -> unsigned char {
-          v = aces_filmic(v * exposure);
-          v = std::pow(v, 1.f / 2.2f);
-          return static_cast<unsigned char>(v * 255.f + 0.5f);
-        };
-        row[3*x]   = to_u8(c.x);
-        row[3*x+1] = to_u8(c.y);
-        row[3*x+2] = to_u8(c.z);
-      }
-      out.write(reinterpret_cast<char*>(row.data()), std::streamsize(row.size()));
-    }
+    photon::pt::io::write_ppm(output, reinterpret_cast<const float *>(fb_h.data()),
+        uint32_t(width), uint32_t(height), exposure);
     std::fprintf(stderr, "Output: %s\n", output.c_str());
   }
   Kokkos::finalize();

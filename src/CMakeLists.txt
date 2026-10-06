@@ -34,6 +34,7 @@ set(PHOTON_CUDA_SOURCES
   photon/pt/scene.cpp
   photon/pt/scene/builder.cpp
   photon/pt/scene/upload.cpp
+  photon/pt/io/ppm.cpp
   photon/pt/environment_map.cpp
   photon/pt/denoiser.cpp
   photon/pt/backend/kokkos_backend.cpp
