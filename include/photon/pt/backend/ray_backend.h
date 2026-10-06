@@ -8,6 +8,7 @@
 #include "photon/pt/math.h"
 #include "photon/pt/math_vec2.h"
 #include "photon/pt/scene.h"
+#include "photon/pt/scene/upload.h"
 
 namespace photon::pt {
 
@@ -62,8 +63,17 @@ struct RayBackend {
       return;
     }
     Scene flat = scene;
-    flat.mesh = flatten_instanced_geometry(scene, instanced);
+    const FlatInstancedMesh flattened = flatten_instanced_geometry(scene, instanced);
+    flat.mesh = flattened.mesh;
     flat.bvh = Bvh::build_cpu(flat.mesh);
+    if (!flattened.emissive_prim_ids.empty()) {
+      flat.emissive_prim_ids = upload_u32(flattened.emissive_prim_ids);
+      flat.emissive_prim_areas = upload_f32(flattened.emissive_prim_areas);
+      flat.emissive_count = u32(flattened.emissive_prim_ids.size());
+      flat.total_emissive_area = 0.f;
+      for (f32 area : flattened.emissive_prim_areas)
+        flat.total_emissive_area += area;
+    }
     std::fprintf(stderr,
         "[photon] %s: no IAS support — flattened %zu instances into %u triangles\n",
         name(), instanced.instances.size(), flat.mesh.triangle_count());

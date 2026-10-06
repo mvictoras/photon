@@ -46,6 +46,45 @@ int main(int argc, char **argv)
   Kokkos::initialize(argc, argv);
   {
 
+    // ---- load_pbrt_textures -------------------------------------------
+    {
+      // Write a tiny 2x1 PFM for the imagemap texture.
+      const char *path = "/tmp/photon_test_tex.pfm";
+      {
+        FILE *f = std::fopen(path, "wb");
+        assert(f);
+        std::fprintf(f, "PF\n2 1\n-1\n");
+        float pixels[6] = {1.f, 0.f, 0.f, 0.f, 1.f, 0.f};
+        std::fwrite(pixels, sizeof(float), 6, f);
+        std::fclose(f);
+      }
+
+      PbrtScene pbrt;
+      PbrtTexture imagemap;
+      imagemap.class_type = "imagemap";
+      imagemap.filename = path;
+      pbrt.textures["img"] = imagemap;
+
+      PbrtTexture constant;  // not an imagemap — must stay untouched
+      constant.class_type = "constant";
+      pbrt.textures["const"] = constant;
+
+      PbrtTexture nofile;  // imagemap with a missing file — stays empty
+      nofile.class_type = "imagemap";
+      nofile.filename = "/tmp/definitely_missing_tex.pfm";
+      pbrt.textures["nofile"] = nofile;
+
+      load_pbrt_textures(pbrt, "");
+      assert(pbrt.textures["img"].data.size() == 6);
+      assert(pbrt.textures["img"].width == 2 && pbrt.textures["img"].height == 1);
+      assert(pbrt.textures["const"].data.empty());
+      assert(pbrt.textures["nofile"].data.empty());
+
+      // Already-loaded textures are not reloaded (data preserved, no error).
+      load_pbrt_textures(pbrt, "");
+      assert(pbrt.textures["img"].data.size() == 6);
+    }
+
     // ---- collect_pbrt_textures ----------------------------------------
     {
       PbrtScene pbrt;
@@ -176,10 +215,12 @@ int main(int argc, char **argv)
       emitter.emission = {3.f, 1.f, 2.f};
       pbrt.meshes.push_back(emitter);
 
-      std::vector<u32> ids{0, 1};
-      std::vector<f32> areas{0.5f, 0.5f};
+      PbrtMeshBuild built;
+      built.emissive_prim_ids = {0, 1};
+      built.emissive_prim_areas = {0.5f, 0.5f};
+      built.total_emissive_area = 1.f;
 
-      auto lights = derive_pbrt_area_lights(pbrt, ids, areas, 1.f);
+      auto lights = derive_pbrt_area_lights(pbrt, built);
       assert(lights.size() == 1);
       const Light &l = lights[0];
       assert(l.type == LightType::Area);

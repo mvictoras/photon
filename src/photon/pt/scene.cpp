@@ -5,8 +5,7 @@
 namespace photon::pt {
 
 TriangleMesh object_mesh_to_triangle_mesh(const ObjectMesh &obj)
-{
-  const uint64_t nv = obj.positions.size() / 3;
+{  const uint64_t nv = obj.positions.size() / 3;
   const uint64_t nt = obj.indices.size() / 3;
   const bool has_normals = obj.normals.size() >= obj.positions.size();
   const bool has_uvs = obj.uvs.size() >= nv * 2;
@@ -88,10 +87,32 @@ struct FlatMesh {
 
 } // anonymous namespace
 
-TriangleMesh flatten_instanced_geometry(const Scene &scene,
-                                        const InstancedGeometry &instanced)
+FlatInstancedMesh flatten_instanced_geometry(const Scene &scene,
+                                             const InstancedGeometry &instanced)
 {
   FlatMesh flat;
+  FlatInstancedMesh out;
+
+  // Scene-level emissive tags carry over: their triangle indices stay valid
+  // because the scene mesh is copied first, in order.
+  if (scene.emissive_count > 0) {
+    auto ids_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, scene.emissive_prim_ids);
+    auto areas_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, scene.emissive_prim_areas);
+    for (u32 i = 0; i < scene.emissive_count; ++i) {
+      out.emissive_prim_ids.push_back(ids_h(i));
+      out.emissive_prim_areas.push_back(areas_h(i));
+    }
+  }
+
+  // Host copy of materials for emissive detection on instance triangles.
+  const bool have_materials = scene.materials.extent(0) > 0;
+  auto mats_h = have_materials
+      ? Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, scene.materials)
+      : decltype(Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, scene.materials)){};
+  auto is_emissive = [&](u32 mat_id) {
+    return have_materials && mat_id < mats_h.extent(0) &&
+        material_is_emissive(mats_h(mat_id));
+  };
 
   // Scene-level mesh first (if any), copied verbatim.
   {
@@ -153,6 +174,11 @@ TriangleMesh flatten_instanced_geometry(const Scene &scene,
         n0 = n1 = n2 = face_n;
       }
 
+      if (is_emissive(obj.material_id)) {
+        out.emissive_prim_ids.push_back(u32(flat.positions.size() / 3));
+        out.emissive_prim_areas.push_back(0.5f * length(cross(p1 - p0, p2 - p0)));
+      }
+
       flat.add_triangle(p0, p1, p2, n0, n1, n2,
           has_uvs ? Vec2{obj.uvs[i0 * 2], obj.uvs[i0 * 2 + 1]} : Vec2{0.f, 0.f},
           has_uvs ? Vec2{obj.uvs[i1 * 2], obj.uvs[i1 * 2 + 1]} : Vec2{0.f, 0.f},
@@ -196,7 +222,8 @@ TriangleMesh flatten_instanced_geometry(const Scene &scene,
     Kokkos::deep_copy(tm.texcoords, uv_h);
   }
 
-  return tm;
+  out.mesh = tm;
+  return out;
 }
 
 } // namespace photon::pt

@@ -11,6 +11,7 @@ set(PHOTON_TEST_SOURCES
   ${PROJECT_SOURCE_DIR}/src/photon/pt/bvh/bvh.cpp
   ${PROJECT_SOURCE_DIR}/src/photon/pt/scene.cpp
   ${PROJECT_SOURCE_DIR}/src/photon/pt/scene/builder.cpp
+  ${PROJECT_SOURCE_DIR}/src/photon/pt/scene/upload.cpp
   ${PROJECT_SOURCE_DIR}/src/photon/pt/environment_map.cpp
   ${PROJECT_SOURCE_DIR}/src/photon/pt/denoiser.cpp
   ${PROJECT_SOURCE_DIR}/src/photon/pt/backend/kokkos_backend.cpp

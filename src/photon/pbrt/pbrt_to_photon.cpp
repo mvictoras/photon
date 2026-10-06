@@ -122,9 +122,10 @@ std::map<std::string, u32> convert_pbrt_materials(
     } else if (pmat.type == "coateddiffuse") {
       m.base_color = {pmat.reflectance.x, pmat.reflectance.y, pmat.reflectance.z};
       m.metallic = 0.f;
-      m.roughness = pbrt_roughness(pmat);
+      const float r = pbrt_roughness(pmat);
+      m.roughness = r;
       m.clearcoat = 1.f;
-      m.clearcoat_roughness = pbrt_roughness(pmat) * 0.5f;
+      m.clearcoat_roughness = r * 0.5f;
     } else if (pmat.type == "diffusetransmission") {
       m.base_color = {pmat.reflectance.x, pmat.reflectance.y, pmat.reflectance.z};
       m.roughness = 1.f;
@@ -258,6 +259,7 @@ PbrtMeshBuild build_pbrt_triangle_mesh(
         out.emissive_prim_ids.push_back(u32(tri_off));
         f32 area = 0.5f * length(cross(p1 - p0, p2 - p0));
         out.emissive_prim_areas.push_back(area);
+        out.total_emissive_area += area;
       }
 
       vert_off += 3;
@@ -276,9 +278,8 @@ PbrtMeshBuild build_pbrt_triangle_mesh(
   return out;
 }
 
-std::vector<Light> derive_pbrt_area_lights(
-    const PbrtScene &pbrt, const std::vector<u32> &emissive_prim_ids,
-    const std::vector<f32> &emissive_prim_areas, f32 total_emissive_area)
+std::vector<Light> derive_pbrt_area_lights(const PbrtScene &pbrt,
+                                           const PbrtMeshBuild &built)
 {
   std::vector<Light> lights;
 
@@ -287,7 +288,7 @@ std::vector<Light> derive_pbrt_area_lights(
       continue;
 
     const size_t ntris = mesh.indices.size() / 3;
-    u32 first_prim = emissive_prim_ids.empty() ? 0 : emissive_prim_ids[0];
+    u32 first_prim = built.emissive_prim_ids.empty() ? 0 : built.emissive_prim_ids[0];
 
     // Corner extraction: p0, p1 from the first triangle's first two indices,
     // p3 from its third index when present — forming the light quad edges.
@@ -304,7 +305,7 @@ std::vector<Light> derive_pbrt_area_lights(
     l.position = p0;
     l.edge1 = p1 - p0;
     l.edge2 = p3 - p0;
-    l.area = total_emissive_area;
+    l.area = built.total_emissive_area;
     l.color = {mesh.emission.x, mesh.emission.y, mesh.emission.z};
     l.intensity = 1.f;
     l.mesh_prim_begin = first_prim;
@@ -481,15 +482,10 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
     scene.emissive_count = u32(built.emissive_prim_ids.size());
     scene.emissive_prim_ids = upload_u32(built.emissive_prim_ids);
     scene.emissive_prim_areas = upload_f32(built.emissive_prim_areas);
-    f32 total_area = 0.f;
-    for (f32 area : built.emissive_prim_areas)
-      total_area += area;
-    scene.total_emissive_area = total_area;
+    scene.total_emissive_area = built.total_emissive_area;
   }
 
-  const std::vector<Light> lights_cpu = derive_pbrt_area_lights(
-      pbrt, built.emissive_prim_ids, built.emissive_prim_areas,
-      scene.total_emissive_area);
+  const std::vector<Light> lights_cpu = derive_pbrt_area_lights(pbrt, built);
 
   if (!lights_cpu.empty()) {
     scene.light_count = u32(lights_cpu.size());

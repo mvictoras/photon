@@ -7,6 +7,7 @@
 #include "photon/pt/backend/kokkos_backend.h"
 #include "photon/pt/scene.h"
 #include "photon/pt/scene/builder.h"
+#include "photon/pt/scene/upload.h"
 
 #include <Kokkos_Core.hpp>
 
@@ -22,35 +23,63 @@ int main(int argc, char **argv)
 
     auto scene = SceneBuilder::make_two_quads();
 
-    // One object: a single triangle in the XY plane at the origin.
+    // Two distinct objects: both unit triangles, object 1 lifted to z=1 so a
+    // hit's t-value proves which object was traversed.
     InstancedGeometry ig;
-    ObjectMesh obj;
-    obj.positions = {0.f, 0.f, 0.f,   1.f, 0.f, 0.f,   0.f, 1.f, 0.f};
-    obj.indices = {0, 1, 2};
-    obj.normals = {0.f, 0.f, 1.f,   0.f, 0.f, 1.f,   0.f, 0.f, 1.f};
-    obj.uvs = {0.f, 0.f,   1.f, 0.f,   0.f, 1.f};
-    obj.material_id = 0;
-    ig.objects.push_back(obj);
+    ObjectMesh obj0;
+    obj0.positions = {0.f, 0.f, 0.f,   1.f, 0.f, 0.f,   0.f, 1.f, 0.f};
+    obj0.indices = {0, 1, 2};
+    obj0.normals = {0.f, 0.f, 1.f,   0.f, 0.f, 1.f,   0.f, 0.f, 1.f};
+    obj0.uvs = {0.f, 0.f,   1.f, 0.f,   0.f, 1.f};
+    obj0.material_id = 0;  // emissive (materials replaced below)
+    ig.objects.push_back(obj0);
 
-    Instance inst_a{};  // identity — triangle stays at origin
+    ObjectMesh obj1;
+    obj1.positions = {0.f, 0.f, 1.f,   1.f, 0.f, 1.f,   0.f, 1.f, 1.f};
+    obj1.indices = {0, 1, 2};
+    obj1.normals = {0.f, 0.f, 1.f,   0.f, 0.f, 1.f,   0.f, 0.f, 1.f};
+    obj1.uvs = {1.f, 1.f,   0.f, 1.f,   1.f, 0.f};
+    obj1.material_id = 1;  // diffuse
+    ig.objects.push_back(obj1);
+
+    Instance inst_a{};  // object 0, identity — triangle stays at origin
+    inst_a.object_id = 0;
     ig.instances.push_back(inst_a);
 
-    Instance inst_b{};  // translate +10 in x (column-major: translation in col 3)
-    inst_b.object_id = 0;
+    Instance inst_b{};  // object 1, translate +10 in x (column-major: translation in col 3)
+    inst_b.object_id = 1;
     float tx[16] = {1,0,0,0,  0,1,0,0,  0,0,1,0,  10,0,0,1};
     std::memcpy(inst_b.transform, tx, sizeof(tx));
     ig.instances.push_back(inst_b);
 
+    // Materials: 0 = emissive, 1 = diffuse. Object 0's triangles must be
+    // tagged emissive on the flattened path (NEE depends on it).
+    {
+      Material emissive{};
+      emissive.emission = {5.f, 5.f, 5.f};
+      emissive.emission_strength = 1.f;
+      Material diffuse{};
+      diffuse.base_color = {0.5f, 0.5f, 0.5f};
+      scene.materials = upload_materials({emissive, diffuse});
+      scene.material_count = 2;
+    }
+
     // Direct flattening: scene mesh (4 tris) + 2 instance triangles.
-    TriangleMesh flat = flatten_instanced_geometry(scene, ig);
+    FlatInstancedMesh flattened = flatten_instanced_geometry(scene, ig);
+    TriangleMesh &flat = flattened.mesh;
     assert(flat.triangle_count() == 6);
     assert(flat.has_texcoords());
+    // Only object 0's triangle is emissive (flat tri index 4).
+    assert(flattened.emissive_prim_ids.size() == 1);
+    assert(flattened.emissive_prim_ids[0] == 4);
+    assert(std::abs(flattened.emissive_prim_areas[0] - 0.5f) < 1e-4f);
 
     auto flat_pos = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, flat.positions);
-    // First instance triangle lands at the origin (vertices 12..14).
+    // Object 0's triangle lands at the origin (vertices 12..14).
     assert(std::abs(flat_pos(12).x - 0.f) < 1e-5f);
-    // Second instance is translated by +10 in x (vertices 15..17).
+    // Object 1 is translated by +10 in x (vertices 15..17).
     assert(std::abs(flat_pos(15).x - 10.f) < 1e-5f);
+    assert(std::abs(flat_pos(15).z - 1.f) < 1e-5f);
 
     // Through the backend interface: KokkosBackend has no IAS support, so
     // build_accel_instanced must flatten (rendering, not dropping).
@@ -70,10 +99,10 @@ int main(int argc, char **argv)
     auto tmin_h = Kokkos::create_mirror_view(rays.tmin);
     auto tmax_h = Kokkos::create_mirror_view(rays.tmax);
 
-    // Ray 0: straight at the identity-instance triangle (z=0 plane).
+    // Ray 0: straight at the identity instance of object 0 (z=0 plane).
     org_h(0) = {0.25f, 0.25f, 5.f};
     dir_h(0) = {0.f, 0.f, -1.f};
-    // Ray 1: straight at the translated instance triangle (x+10).
+    // Ray 1: straight at the translated instance of object 1 (z=1 plane).
     org_h(1) = {10.25f, 0.25f, 5.f};
     dir_h(1) = {0.f, 0.f, -1.f};
     // Ray 2: misses both instances (y<0), hits the scene quad at z=-2.5.
@@ -102,7 +131,7 @@ int main(int argc, char **argv)
     assert(hits_h(0).hit);
     assert(std::abs(hits_h(0).t - 5.f) < 1e-3f);
     assert(hits_h(1).hit);
-    assert(std::abs(hits_h(1).t - 5.f) < 1e-3f);
+    assert(std::abs(hits_h(1).t - 4.f) < 1e-3f);  // object 1 plane is z=1
     assert(hits_h(2).hit);
     assert(std::abs(hits_h(2).t - 4.5f) < 1e-3f);
 

@@ -49,6 +49,7 @@ struct PbrtMeshBuild {
   photon::pt::TriangleMesh mesh;  // empty (0 triangles) for instanced-only scenes
   std::vector<photon::pt::u32> emissive_prim_ids;
   std::vector<photon::pt::f32> emissive_prim_areas;
+  photon::pt::f32 total_emissive_area{0.f};  // sum of emissive_prim_areas
 };
 
 // Build the flat scene-level TriangleMesh from pbrt.meshes, applying each
@@ -64,8 +65,7 @@ PbrtMeshBuild build_pbrt_triangle_mesh(
 // Derive area lights from the emissive primitives recorded by
 // build_pbrt_triangle_mesh (one Light per emissive mesh).
 std::vector<photon::pt::Light> derive_pbrt_area_lights(
-    const PbrtScene &pbrt, const std::vector<photon::pt::u32> &emissive_prim_ids,
-    const std::vector<photon::pt::f32> &emissive_prim_areas, photon::pt::f32 total_emissive_area);
+    const PbrtScene &pbrt, const PbrtMeshBuild &built);
 
 // Build the environment map (including the world<->texture rotation matrices
 // from the scene's env transform). Returns nullopt when the scene has no env

@@ -62,11 +62,21 @@ struct Scene {
 // with the object's single material_id per triangle.
 TriangleMesh object_mesh_to_triangle_mesh(const ObjectMesh &obj);
 
+// Result of flattening an instanced scene: the merged flat mesh plus
+// emissive-primitive tagging for NEE. Scene-level emissive tags are carried
+// over (their triangle indices stay valid — the scene mesh is copied first,
+// in order); instance triangles are tagged when their material is emissive.
+struct FlatInstancedMesh {
+  TriangleMesh mesh;
+  std::vector<u32> emissive_prim_ids;
+  std::vector<f32> emissive_prim_areas;
+};
+
 // CPU-side flattening fallback for backends without two-level BVH support:
 // transforms each instance's referenced ObjectMesh into world space and
 // appends it (together with the scene-level mesh) into a single flat
 // TriangleMesh. Slower than a true IAS but never silently drops geometry.
-TriangleMesh flatten_instanced_geometry(const Scene &scene,
-                                        const InstancedGeometry &instanced);
+FlatInstancedMesh flatten_instanced_geometry(const Scene &scene,
+                                             const InstancedGeometry &instanced);
 
 } // namespace photon::pt
