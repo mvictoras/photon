@@ -22,26 +22,9 @@ namespace photon::pbrt {
 
 using namespace photon::pt;
 
-static Mat4 mat4_from_pbrt_column_major(const float *cm)
-{
-  Mat4 m{};
-  for (int col = 0; col < 4; ++col)
-    for (int row = 0; row < 4; ++row)
-      m.m[row][col] = cm[col * 4 + row];
-  return m;
-}
+namespace {
 
-static Vec3 transform_point(const Mat4 &m, const Vec3 &p)
-{
-  return m.transform_point(p);
-}
-
-static Vec3 transform_direction(const Mat4 &m, const Vec3 &d)
-{
-  return m.transform_direction(d);
-}
-
-static Vec3 sample_texture(const PbrtTexture &tex, float u, float v)
+Vec3 sample_texture(const PbrtTexture &tex, float u, float v)
 {
   u = u - std::floor(u);
   v = v - std::floor(v);
@@ -55,10 +38,26 @@ static Vec3 sample_texture(const PbrtTexture &tex, float u, float v)
   return {tex.data[idx], tex.data[idx + 1], tex.data[idx + 2]};
 }
 
-ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base_dir)
+// Shared roughness rule for materials with (u,v) roughness pairs.
+float pbrt_roughness(const PbrtMaterial &pmat)
 {
-  ConvertedScene result;
+  if (pmat.uroughness < 0.f)
+    return pmat.roughness;
+  const float v = pmat.vroughness >= 0.f ? pmat.vroughness : pmat.uroughness;
+  return (pmat.uroughness + v) * 0.5f;
+}
 
+u32 lookup_material(const std::map<std::string, u32> &mat_name_to_id,
+                    const std::string &name)
+{
+  auto it = mat_name_to_id.find(name);
+  return it != mat_name_to_id.end() ? it->second : 0u;
+}
+
+} // anonymous namespace
+
+void load_pbrt_textures(const PbrtScene &pbrt, const std::string &base_dir)
+{
   auto &textures = const_cast<std::map<std::string, PbrtTexture> &>(pbrt.textures);
   for (auto &[name, tex] : textures) {
     if (tex.class_type == "imagemap" && !tex.filename.empty() && tex.data.empty()) {
@@ -66,39 +65,34 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
       load_image(path, tex);
     }
   }
+}
 
-  uint64_t total_tris = 0;
-  for (const auto &mesh : pbrt.meshes)
-    total_tris += mesh.indices.size() / 3;
-
-  if (total_tris == 0) {
-    std::fprintf(stderr, "pbrt scene has no scene-level triangles (instanced-only scene)\n");
-  }
-
-  std::map<std::string, i32> tex_name_to_id;
-  std::vector<const PbrtTexture *> tex_list;
+PbrtTextureRefs collect_pbrt_textures(const PbrtScene &pbrt)
+{
+  PbrtTextureRefs refs;
   for (const auto &[name, tex] : pbrt.textures) {
     if (!tex.data.empty() && tex.width > 0 && tex.height > 0) {
-      tex_name_to_id[name] = i32(tex_list.size());
-      tex_list.push_back(&tex);
+      refs.name_to_id[name] = i32(refs.list.size());
+      refs.list.push_back(&tex);
     }
   }
+  return refs;
+}
 
-  std::vector<Material> materials_cpu;
-  std::vector<Light> lights_cpu;
-  std::vector<u32> emissive_prim_ids;
-  std::vector<f32> emissive_prim_areas;
-
+std::map<std::string, u32> convert_pbrt_materials(
+    const PbrtScene &pbrt, const PbrtTextureRefs &textures,
+    std::vector<Material> &out_materials)
+{
   std::map<std::string, u32> mat_name_to_id;
 
   for (const auto &[name, pmat] : pbrt.named_materials) {
-    u32 id = u32(materials_cpu.size());
+    u32 id = u32(out_materials.size());
     mat_name_to_id[name] = id;
 
     Material m{};
     if (!pmat.reflectance_texture.empty()) {
-      auto tit = tex_name_to_id.find(pmat.reflectance_texture);
-      if (tit != tex_name_to_id.end())
+      auto tit = textures.name_to_id.find(pmat.reflectance_texture);
+      if (tit != textures.name_to_id.end())
         m.base_color_tex = tit->second;
     }
 
@@ -118,27 +112,18 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
         fresnel_f0(pmat.eta.z, pmat.k.z)
       };
       m.metallic = 1.f;
-      float r = pmat.roughness;
-      if (pmat.uroughness >= 0.f)
-        r = (pmat.uroughness + (pmat.vroughness >= 0.f ? pmat.vroughness : pmat.uroughness)) * 0.5f;
-      m.roughness = r;
+      m.roughness = pbrt_roughness(pmat);
     } else if (pmat.type == "dielectric") {
       m.base_color = {1.f, 1.f, 1.f};
       m.ior = pmat.eta_scalar;
       m.transmission = 1.f;
-      float r = pmat.roughness;
-      if (pmat.uroughness >= 0.f)
-        r = (pmat.uroughness + (pmat.vroughness >= 0.f ? pmat.vroughness : pmat.uroughness)) * 0.5f;
-      m.roughness = r;
+      m.roughness = pbrt_roughness(pmat);
     } else if (pmat.type == "coateddiffuse") {
       m.base_color = {pmat.reflectance.x, pmat.reflectance.y, pmat.reflectance.z};
       m.metallic = 0.f;
-      float r = pmat.roughness;
-      if (pmat.uroughness >= 0.f)
-        r = (pmat.uroughness + (pmat.vroughness >= 0.f ? pmat.vroughness : pmat.uroughness)) * 0.5f;
-      m.roughness = r;
+      m.roughness = pbrt_roughness(pmat);
       m.clearcoat = 1.f;
-      m.clearcoat_roughness = r * 0.5f;
+      m.clearcoat_roughness = pbrt_roughness(pmat) * 0.5f;
     } else if (pmat.type == "diffusetransmission") {
       m.base_color = {pmat.reflectance.x, pmat.reflectance.y, pmat.reflectance.z};
       m.roughness = 1.f;
@@ -148,137 +133,331 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
       m.base_color = {pmat.reflectance.x, pmat.reflectance.y, pmat.reflectance.z};
       m.roughness = pmat.roughness;
     }
-    materials_cpu.push_back(m);
+    out_materials.push_back(m);
   }
 
-  if (materials_cpu.empty()) {
+  if (out_materials.empty()) {
     Material fallback{};
     fallback.base_color = {0.5f, 0.5f, 0.5f};
     fallback.roughness = 1.f;
-    materials_cpu.push_back(fallback);
+    out_materials.push_back(fallback);
     mat_name_to_id["__default__"] = 0;
   }
 
-  Scene &scene = result.scene;
+  return mat_name_to_id;
+}
 
-  if (total_tris > 0) {
-    const uint64_t total_verts = total_tris * 3;
+PbrtMeshBuild build_pbrt_triangle_mesh(
+    const PbrtScene &pbrt, const PbrtTextureRefs &textures,
+    std::vector<Material> &materials, std::map<std::string, u32> &mat_name_to_id)
+{
+  PbrtMeshBuild out;
 
-    TriangleMesh tm;
-    tm.positions = Kokkos::View<Vec3 *>("pos", total_verts);
-    tm.indices = Kokkos::View<u32 *>("idx", total_verts);
-    tm.material_ids = Kokkos::View<u32 *>("mat_id", total_tris);
-    tm.albedo_per_prim = Kokkos::View<Vec3 *>("alb", total_tris);
-    tm.normals = Kokkos::View<Vec3 *>("normals", total_verts);
-    tm.texcoords = Kokkos::View<Vec2 *>("uv", total_verts);
+  uint64_t total_tris = 0;
+  for (const auto &mesh : pbrt.meshes)
+    total_tris += mesh.indices.size() / 3;
 
-    auto pos_h = Kokkos::create_mirror_view(tm.positions);
-    auto idx_h = Kokkos::create_mirror_view(tm.indices);
-    auto mat_id_h = Kokkos::create_mirror_view(tm.material_ids);
-    auto alb_h = Kokkos::create_mirror_view(tm.albedo_per_prim);
-    auto nrm_h = Kokkos::create_mirror_view(tm.normals);
-    auto uv_h = Kokkos::create_mirror_view(tm.texcoords);
+  if (total_tris == 0) {
+    std::fprintf(stderr, "pbrt scene has no scene-level triangles (instanced-only scene)\n");
+    return out;
+  }
 
-    uint64_t vert_off = 0;
-    uint64_t tri_off = 0;
+  const uint64_t total_verts = total_tris * 3;
 
-    for (const auto &mesh : pbrt.meshes) {
-      Mat4 xfm = mat4_from_pbrt_column_major(mesh.transform);
+  TriangleMesh tm;
+  tm.positions = Kokkos::View<Vec3 *>("pos", total_verts);
+  tm.indices = Kokkos::View<u32 *>("idx", total_verts);
+  tm.material_ids = Kokkos::View<u32 *>("mat_id", total_tris);
+  tm.albedo_per_prim = Kokkos::View<Vec3 *>("alb", total_tris);
+  tm.normals = Kokkos::View<Vec3 *>("normals", total_verts);
+  tm.texcoords = Kokkos::View<Vec2 *>("uv", total_verts);
 
-      u32 mat_id = 0;
-      auto it = mat_name_to_id.find(mesh.material_name);
-      if (it != mat_name_to_id.end())
-        mat_id = it->second;
+  auto pos_h = Kokkos::create_mirror_view(tm.positions);
+  auto idx_h = Kokkos::create_mirror_view(tm.indices);
+  auto mat_id_h = Kokkos::create_mirror_view(tm.material_ids);
+  auto alb_h = Kokkos::create_mirror_view(tm.albedo_per_prim);
+  auto nrm_h = Kokkos::create_mirror_view(tm.normals);
+  auto uv_h = Kokkos::create_mirror_view(tm.texcoords);
 
-      const bool has_uvs = mesh.uvs.size() >= (mesh.positions.size() / 3) * 2;
+  uint64_t vert_off = 0;
+  uint64_t tri_off = 0;
 
-      if (!mesh.alpha_texture.empty()) {
-        auto ait = tex_name_to_id.find(mesh.alpha_texture);
-        if (ait != tex_name_to_id.end()) {
-          Material alpha_mat = materials_cpu[mat_id];
-          alpha_mat.alpha_tex = ait->second;
-          mat_id = u32(materials_cpu.size());
-          materials_cpu.push_back(alpha_mat);
-        }
-      }
+  for (const auto &mesh : pbrt.meshes) {
+    // Per-mesh transform — decoded once, applied to every vertex/corner.
+    const Mat4 xfm = mat4_from_column_major(mesh.transform);
 
-      if (mesh.is_emissive) {
-        Material emit_mat{};
-        emit_mat.base_color = {0.f, 0.f, 0.f};
-        emit_mat.emission = {mesh.emission.x, mesh.emission.y, mesh.emission.z};
-        emit_mat.emission_strength = 1.f;
-        emit_mat.roughness = 1.f;
-        mat_id = u32(materials_cpu.size());
-        materials_cpu.push_back(emit_mat);
-      }
+    u32 mat_id = lookup_material(mat_name_to_id, mesh.material_name);
 
-      const size_t ntris = mesh.indices.size() / 3;
-      const bool has_normals = mesh.normals.size() >= mesh.positions.size();
+    const bool has_uvs = mesh.uvs.size() >= (mesh.positions.size() / 3) * 2;
 
-      for (size_t t = 0; t < ntris; ++t) {
-        const int i0 = mesh.indices[t * 3 + 0];
-        const int i1 = mesh.indices[t * 3 + 1];
-        const int i2 = mesh.indices[t * 3 + 2];
-
-        Vec3 p0 = {mesh.positions[i0*3], mesh.positions[i0*3+1], mesh.positions[i0*3+2]};
-        Vec3 p1 = {mesh.positions[i1*3], mesh.positions[i1*3+1], mesh.positions[i1*3+2]};
-        Vec3 p2 = {mesh.positions[i2*3], mesh.positions[i2*3+1], mesh.positions[i2*3+2]};
-
-        p0 = transform_point(xfm, p0);
-        p1 = transform_point(xfm, p1);
-        p2 = transform_point(xfm, p2);
-
-        pos_h(vert_off + 0) = p0;
-        pos_h(vert_off + 1) = p1;
-        pos_h(vert_off + 2) = p2;
-
-        idx_h(vert_off + 0) = u32(vert_off + 0);
-        idx_h(vert_off + 1) = u32(vert_off + 1);
-        idx_h(vert_off + 2) = u32(vert_off + 2);
-
-        if (has_normals) {
-          Vec3 n0 = {mesh.normals[i0*3], mesh.normals[i0*3+1], mesh.normals[i0*3+2]};
-          Vec3 n1 = {mesh.normals[i1*3], mesh.normals[i1*3+1], mesh.normals[i1*3+2]};
-          Vec3 n2 = {mesh.normals[i2*3], mesh.normals[i2*3+1], mesh.normals[i2*3+2]};
-          nrm_h(vert_off + 0) = normalize(transform_direction(xfm, n0));
-          nrm_h(vert_off + 1) = normalize(transform_direction(xfm, n1));
-          nrm_h(vert_off + 2) = normalize(transform_direction(xfm, n2));
-        } else {
-          Vec3 face_n = normalize(cross(p1 - p0, p2 - p0));
-          nrm_h(vert_off + 0) = face_n;
-          nrm_h(vert_off + 1) = face_n;
-          nrm_h(vert_off + 2) = face_n;
-        }
-
-        if (has_uvs) {
-          uv_h(vert_off + 0) = {mesh.uvs[i0 * 2], mesh.uvs[i0 * 2 + 1]};
-          uv_h(vert_off + 1) = {mesh.uvs[i1 * 2], mesh.uvs[i1 * 2 + 1]};
-          uv_h(vert_off + 2) = {mesh.uvs[i2 * 2], mesh.uvs[i2 * 2 + 1]};
-        }
-
-        mat_id_h(tri_off) = mat_id;
-        alb_h(tri_off) = materials_cpu[mat_id].base_color;
-
-        if (mesh.is_emissive) {
-          emissive_prim_ids.push_back(u32(tri_off));
-          f32 area = 0.5f * length(cross(p1 - p0, p2 - p0));
-          emissive_prim_areas.push_back(area);
-        }
-
-        vert_off += 3;
-        tri_off += 1;
+    if (!mesh.alpha_texture.empty()) {
+      auto ait = textures.name_to_id.find(mesh.alpha_texture);
+      if (ait != textures.name_to_id.end()) {
+        Material alpha_mat = materials[mat_id];
+        alpha_mat.alpha_tex = ait->second;
+        mat_id = u32(materials.size());
+        materials.push_back(alpha_mat);
       }
     }
 
-    Kokkos::deep_copy(tm.positions, pos_h);
-    Kokkos::deep_copy(tm.indices, idx_h);
-    Kokkos::deep_copy(tm.material_ids, mat_id_h);
-    Kokkos::deep_copy(tm.albedo_per_prim, alb_h);
-    Kokkos::deep_copy(tm.normals, nrm_h);
-    Kokkos::deep_copy(tm.texcoords, uv_h);
+    if (mesh.is_emissive) {
+      Material emit_mat{};
+      emit_mat.base_color = {0.f, 0.f, 0.f};
+      emit_mat.emission = {mesh.emission.x, mesh.emission.y, mesh.emission.z};
+      emit_mat.emission_strength = 1.f;
+      emit_mat.roughness = 1.f;
+      mat_id = u32(materials.size());
+      materials.push_back(emit_mat);
+    }
 
-    scene.mesh = tm;
-    scene.bvh = Bvh::build_cpu(tm);
+    const size_t ntris = mesh.indices.size() / 3;
+    const bool has_normals = mesh.normals.size() >= mesh.positions.size();
+
+    for (size_t t = 0; t < ntris; ++t) {
+      const int i0 = mesh.indices[t * 3 + 0];
+      const int i1 = mesh.indices[t * 3 + 1];
+      const int i2 = mesh.indices[t * 3 + 2];
+
+      Vec3 p0 = xfm.transform_point({mesh.positions[i0*3], mesh.positions[i0*3+1], mesh.positions[i0*3+2]});
+      Vec3 p1 = xfm.transform_point({mesh.positions[i1*3], mesh.positions[i1*3+1], mesh.positions[i1*3+2]});
+      Vec3 p2 = xfm.transform_point({mesh.positions[i2*3], mesh.positions[i2*3+1], mesh.positions[i2*3+2]});
+
+      pos_h(vert_off + 0) = p0;
+      pos_h(vert_off + 1) = p1;
+      pos_h(vert_off + 2) = p2;
+
+      idx_h(vert_off + 0) = u32(vert_off + 0);
+      idx_h(vert_off + 1) = u32(vert_off + 1);
+      idx_h(vert_off + 2) = u32(vert_off + 2);
+
+      if (has_normals) {
+        Vec3 n0 = {mesh.normals[i0*3], mesh.normals[i0*3+1], mesh.normals[i0*3+2]};
+        Vec3 n1 = {mesh.normals[i1*3], mesh.normals[i1*3+1], mesh.normals[i1*3+2]};
+        Vec3 n2 = {mesh.normals[i2*3], mesh.normals[i2*3+1], mesh.normals[i2*3+2]};
+        nrm_h(vert_off + 0) = normalize(xfm.transform_direction(n0));
+        nrm_h(vert_off + 1) = normalize(xfm.transform_direction(n1));
+        nrm_h(vert_off + 2) = normalize(xfm.transform_direction(n2));
+      } else {
+        Vec3 face_n = normalize(cross(p1 - p0, p2 - p0));
+        nrm_h(vert_off + 0) = face_n;
+        nrm_h(vert_off + 1) = face_n;
+        nrm_h(vert_off + 2) = face_n;
+      }
+
+      if (has_uvs) {
+        uv_h(vert_off + 0) = {mesh.uvs[i0 * 2], mesh.uvs[i0 * 2 + 1]};
+        uv_h(vert_off + 1) = {mesh.uvs[i1 * 2], mesh.uvs[i1 * 2 + 1]};
+        uv_h(vert_off + 2) = {mesh.uvs[i2 * 2], mesh.uvs[i2 * 2 + 1]};
+      }
+
+      mat_id_h(tri_off) = mat_id;
+      alb_h(tri_off) = materials[mat_id].base_color;
+
+      if (mesh.is_emissive) {
+        out.emissive_prim_ids.push_back(u32(tri_off));
+        f32 area = 0.5f * length(cross(p1 - p0, p2 - p0));
+        out.emissive_prim_areas.push_back(area);
+      }
+
+      vert_off += 3;
+      tri_off += 1;
+    }
+  }
+
+  Kokkos::deep_copy(tm.positions, pos_h);
+  Kokkos::deep_copy(tm.indices, idx_h);
+  Kokkos::deep_copy(tm.material_ids, mat_id_h);
+  Kokkos::deep_copy(tm.albedo_per_prim, alb_h);
+  Kokkos::deep_copy(tm.normals, nrm_h);
+  Kokkos::deep_copy(tm.texcoords, uv_h);
+
+  out.mesh = tm;
+  return out;
+}
+
+std::vector<Light> derive_pbrt_area_lights(
+    const PbrtScene &pbrt, const std::vector<u32> &emissive_prim_ids,
+    const std::vector<f32> &emissive_prim_areas, f32 total_emissive_area)
+{
+  std::vector<Light> lights;
+
+  for (const auto &mesh : pbrt.meshes) {
+    if (!mesh.is_emissive)
+      continue;
+
+    const size_t ntris = mesh.indices.size() / 3;
+    u32 first_prim = emissive_prim_ids.empty() ? 0 : emissive_prim_ids[0];
+
+    // Corner extraction: p0, p1 from the first triangle's first two indices,
+    // p3 from its third index when present — forming the light quad edges.
+    const Mat4 xfm = mat4_from_column_major(mesh.transform);
+    auto corner = [&](int idx) {
+      return xfm.transform_point({mesh.positions[idx*3], mesh.positions[idx*3+1], mesh.positions[idx*3+2]});
+    };
+    Vec3 p0 = corner(mesh.indices[0]);
+    Vec3 p1 = corner(mesh.indices[1]);
+    Vec3 p3 = mesh.indices.size() >= 6 ? corner(mesh.indices[5]) : p0;
+
+    Light l{};
+    l.type = LightType::Area;
+    l.position = p0;
+    l.edge1 = p1 - p0;
+    l.edge2 = p3 - p0;
+    l.area = total_emissive_area;
+    l.color = {mesh.emission.x, mesh.emission.y, mesh.emission.z};
+    l.intensity = 1.f;
+    l.mesh_prim_begin = first_prim;
+    l.mesh_prim_count = u32(ntris);
+    Vec3 cr = cross(l.edge1, l.edge2);
+    l.direction = length(cr) > 0.f ? cr * (1.f / length(cr)) : Vec3{0.f, -1.f, 0.f};
+    lights.push_back(l);
+  }
+
+  return lights;
+}
+
+std::optional<EnvironmentMap> build_pbrt_env_map(const PbrtScene &pbrt,
+                                                 const std::string &base_dir)
+{
+  if (!pbrt.has_env_map || pbrt.env_map_filename.empty())
+    return std::nullopt;
+
+  PbrtTexture env_tex;
+  std::string env_path = base_dir + pbrt.env_map_filename;
+  if (!load_image(env_path, env_tex))
+    return std::nullopt;
+
+  EnvironmentMap env;
+  env.width = u32(env_tex.width);
+  env.height = u32(env_tex.height);
+  env.pixels = Kokkos::View<Vec3 **, Kokkos::LayoutRight>("env_pixels", env.height, env.width);
+  auto epix_h = Kokkos::create_mirror_view(env.pixels);
+  for (u32 y = 0; y < env.height; ++y)
+    for (u32 x = 0; x < env.width; ++x) {
+      size_t si = (size_t(y) * env.width + x) * 3;
+      epix_h(y, x) = {
+        env_tex.data[si] * pbrt.env_map_scale,
+        env_tex.data[si + 1] * pbrt.env_map_scale,
+        env_tex.data[si + 2] * pbrt.env_map_scale};
+    }
+  Kokkos::deep_copy(env.pixels, epix_h);
+  env.marginal_cdf = Kokkos::View<f32 *>("env_marginal", env.height + 1);
+  env.conditional_cdf = Kokkos::View<f32 **>("env_conditional", env.height, env.width + 1);
+  env.build_cdf();
+
+  // Rotation matrices from the PBRT scene transform:
+  // world_to_tex = inverse of the object-to-world env transform (3x3 upper-left),
+  // tex_to_world = the object-to-world env transform itself.
+  const Mat4 env_xfm = mat4_from_column_major(pbrt.env_map_transform);
+  const Mat4 env_inv = env_xfm.inverse();
+  for (int r = 0; r < 3; ++r)
+    for (int c = 0; c < 3; ++c) {
+      env.world_to_tex[r * 3 + c] = env_inv.m[r][c];
+      env.tex_to_world[r * 3 + c] = env_xfm.m[r][c];
+    }
+  std::fprintf(stderr, "  Env map rotation applied (transform from scene)\n");
+
+  std::fprintf(stderr, "  Environment map: %s (%ux%u)\n", env_path.c_str(), env.width, env.height);
+  return env;
+}
+
+Camera derive_pbrt_camera(const PbrtScene &pbrt)
+{
+  Vec3 cam_pos, cam_dir, cam_up;
+
+  if (pbrt.camera.has_lookat) {
+    // LookAt positions are in world space — Scale before Camera only affects
+    // camera-internal handedness, not world-space eye/at/up coordinates.
+    cam_pos = {pbrt.camera.look_from.x, pbrt.camera.look_from.y, pbrt.camera.look_from.z};
+    Vec3 look_target = {pbrt.camera.look_at_pt.x, pbrt.camera.look_at_pt.y, pbrt.camera.look_at_pt.z};
+    cam_dir = normalize(look_target - cam_pos);
+    cam_up = normalize(Vec3{pbrt.camera.look_up.x, pbrt.camera.look_up.y, pbrt.camera.look_up.z});
+  } else {
+    Mat4 world_to_cam = mat4_from_column_major(pbrt.camera.transform);
+    Mat4 cam_to_world = world_to_cam.inverse();
+    cam_pos = cam_to_world.transform_point({0, 0, 0});
+    cam_dir = normalize(cam_to_world.transform_direction({0, 0, 1}));
+    cam_up = normalize(cam_to_world.transform_direction({0, 1, 0}));
+  }
+
+  float aspect = float(pbrt.width) / float(pbrt.height);
+  Camera camera = Camera::make_perspective(
+      cam_pos, cam_pos + cam_dir, cam_up, pbrt.camera.fov, aspect);
+  if (pbrt.camera.lensradius > 0.f) {
+    camera.lens_radius = pbrt.camera.lensradius;
+    camera.focus_dist = pbrt.camera.focaldistance > 0.f
+        ? pbrt.camera.focaldistance : length(cam_dir);
+  }
+  return camera;
+}
+
+InstancedGeometry build_pbrt_instanced_geometry(
+    const PbrtScene &pbrt, const std::map<std::string, u32> &mat_name_to_id)
+{
+  InstancedGeometry ig;
+  if (pbrt.object_defs.empty() || pbrt.object_instances.empty())
+    return ig;
+
+  std::map<std::string, u32> obj_name_to_idx;
+  for (const auto &[name, meshes] : pbrt.object_defs) {
+    u32 idx = u32(ig.objects.size());
+    obj_name_to_idx[name] = idx;
+
+    // Merge all sub-meshes of this object into one ObjectMesh.
+    ObjectMesh obj;
+    uint64_t voff = 0;
+    for (const auto &m : meshes) {
+      const uint64_t nv = m.positions.size() / 3;
+
+      // Resolve material (last sub-mesh wins when multiple materials present)
+      obj.material_id = lookup_material(mat_name_to_id, m.material_name);
+
+      obj.positions.insert(obj.positions.end(),
+          m.positions.begin(), m.positions.end());
+      for (int idx_val : m.indices)
+        obj.indices.push_back(idx_val + int(voff));
+      if (m.normals.size() >= m.positions.size())
+        obj.normals.insert(obj.normals.end(),
+            m.normals.begin(), m.normals.end());
+      if (!m.uvs.empty())
+        obj.uvs.insert(obj.uvs.end(), m.uvs.begin(), m.uvs.end());
+
+      voff += nv;
+    }
+    ig.objects.push_back(std::move(obj));
+  }
+
+  for (const auto &inst : pbrt.object_instances) {
+    auto it = obj_name_to_idx.find(inst.object_name);
+    if (it == obj_name_to_idx.end()) continue;
+
+    Instance gi;
+    gi.object_id = it->second;
+    std::memcpy(gi.transform, inst.transform, sizeof(float) * 16);
+    ig.instances.push_back(gi);
+  }
+
+  return ig;
+}
+
+ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base_dir)
+{
+  ConvertedScene result;
+  Scene &scene = result.scene;
+
+  load_pbrt_textures(pbrt, base_dir);
+  const PbrtTextureRefs textures = collect_pbrt_textures(pbrt);
+
+  std::vector<Material> materials_cpu;
+  std::map<std::string, u32> mat_name_to_id =
+      convert_pbrt_materials(pbrt, textures, materials_cpu);
+
+  const PbrtMeshBuild built =
+      build_pbrt_triangle_mesh(pbrt, textures, materials_cpu, mat_name_to_id);
+
+  if (built.mesh.triangle_count() > 0) {
+    scene.mesh = built.mesh;
+    scene.bvh = Bvh::build_cpu(built.mesh);
   }
 
   scene.material_count = u32(materials_cpu.size());
@@ -290,11 +469,11 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
     Kokkos::deep_copy(scene.materials, mats_host);
   }
 
-  if (!tex_list.empty()) {
-    scene.textures.count = u32(tex_list.size());
+  if (!textures.list.empty()) {
+    scene.textures.count = u32(textures.list.size());
 
     size_t total_pixels = 0;
-    for (const auto *src : tex_list)
+    for (const auto *src : textures.list)
       total_pixels += size_t(src->width) * size_t(src->height);
 
     scene.textures.pixels = Kokkos::View<Vec3 *>("tex_pixels", total_pixels);
@@ -305,7 +484,7 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
 
     u32 pixel_offset = 0;
     for (u32 ti = 0; ti < scene.textures.count; ++ti) {
-      const PbrtTexture *src = tex_list[ti];
+      const PbrtTexture *src = textures.list[ti];
       info_h(ti).offset = pixel_offset;
       info_h(ti).width = u32(src->width);
       info_h(ti).height = u32(src->height);
@@ -325,8 +504,8 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
         scene.textures.count, total_pixels, float(total_pixels * sizeof(Vec3)) / (1024.f * 1024.f));
   }
 
-  if (!emissive_prim_ids.empty()) {
-    scene.emissive_count = u32(emissive_prim_ids.size());
+  if (!built.emissive_prim_ids.empty()) {
+    scene.emissive_count = u32(built.emissive_prim_ids.size());
     scene.emissive_prim_ids = Kokkos::View<u32 *>("emissive_ids", scene.emissive_count);
     scene.emissive_prim_areas = Kokkos::View<f32 *>("emissive_areas", scene.emissive_count);
 
@@ -334,48 +513,18 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
     auto eareas_h = Kokkos::create_mirror_view(scene.emissive_prim_areas);
     f32 total_area = 0.f;
     for (u32 i = 0; i < scene.emissive_count; ++i) {
-      eids_h(i) = emissive_prim_ids[i];
-      eareas_h(i) = emissive_prim_areas[i];
-      total_area += emissive_prim_areas[i];
+      eids_h(i) = built.emissive_prim_ids[i];
+      eareas_h(i) = built.emissive_prim_areas[i];
+      total_area += built.emissive_prim_areas[i];
     }
     scene.total_emissive_area = total_area;
     Kokkos::deep_copy(scene.emissive_prim_ids, eids_h);
     Kokkos::deep_copy(scene.emissive_prim_areas, eareas_h);
-
-    for (size_t mi = 0; mi < pbrt.meshes.size(); ++mi) {
-      const auto &mesh = pbrt.meshes[mi];
-      if (!mesh.is_emissive)
-        continue;
-
-      const size_t ntris = mesh.indices.size() / 3;
-      u32 first_prim = emissive_prim_ids.empty() ? 0 : emissive_prim_ids[0];
-
-      Mat4 xfm = mat4_from_pbrt_column_major(mesh.transform);
-      Vec3 p0 = transform_point(xfm, {mesh.positions[mesh.indices[0]*3],
-          mesh.positions[mesh.indices[0]*3+1], mesh.positions[mesh.indices[0]*3+2]});
-      Vec3 p1 = transform_point(xfm, {mesh.positions[mesh.indices[1]*3],
-          mesh.positions[mesh.indices[1]*3+1], mesh.positions[mesh.indices[1]*3+2]});
-      Vec3 p3 = p0;
-      if (mesh.indices.size() >= 6) {
-        int i5 = mesh.indices[5];
-        p3 = transform_point(xfm, {mesh.positions[i5*3], mesh.positions[i5*3+1], mesh.positions[i5*3+2]});
-      }
-
-      Light l{};
-      l.type = LightType::Area;
-      l.position = p0;
-      l.edge1 = p1 - p0;
-      l.edge2 = p3 - p0;
-      l.area = total_area;
-      l.color = {mesh.emission.x, mesh.emission.y, mesh.emission.z};
-      l.intensity = 1.f;
-      l.mesh_prim_begin = first_prim;
-      l.mesh_prim_count = u32(ntris);
-      Vec3 cr = cross(l.edge1, l.edge2);
-      l.direction = length(cr) > 0.f ? cr * (1.f / length(cr)) : Vec3{0.f, -1.f, 0.f};
-      lights_cpu.push_back(l);
-    }
   }
+
+  const std::vector<Light> lights_cpu = derive_pbrt_area_lights(
+      pbrt, built.emissive_prim_ids, built.emissive_prim_areas,
+      scene.total_emissive_area);
 
   if (!lights_cpu.empty()) {
     scene.light_count = u32(lights_cpu.size());
@@ -386,118 +535,13 @@ ConvertedScene convert_pbrt_scene(const PbrtScene &pbrt, const std::string &base
     Kokkos::deep_copy(scene.lights, lights_h);
   }
 
-  if (pbrt.has_env_map && !pbrt.env_map_filename.empty()) {
-    PbrtTexture env_tex;
-    std::string env_path = base_dir + pbrt.env_map_filename;
-    if (load_image(env_path, env_tex)) {
-      EnvironmentMap env;
-      env.width = u32(env_tex.width);
-      env.height = u32(env_tex.height);
-      env.pixels = Kokkos::View<Vec3 **, Kokkos::LayoutRight>("env_pixels", env.height, env.width);
-      auto epix_h = Kokkos::create_mirror_view(env.pixels);
-      for (u32 y = 0; y < env.height; ++y)
-        for (u32 x = 0; x < env.width; ++x) {
-          size_t si = (size_t(y) * env.width + x) * 3;
-          epix_h(y, x) = {
-            env_tex.data[si] * pbrt.env_map_scale,
-            env_tex.data[si + 1] * pbrt.env_map_scale,
-            env_tex.data[si + 2] * pbrt.env_map_scale};
-        }
-      Kokkos::deep_copy(env.pixels, epix_h);
-      env.marginal_cdf = Kokkos::View<f32 *>("env_marginal", env.height + 1);
-      env.conditional_cdf = Kokkos::View<f32 **>("env_conditional", env.height, env.width + 1);
-      env.build_cdf();
-      // Apply environment map rotation from PBRT scene transform
-      Mat4 env_xfm = mat4_from_pbrt_column_major(pbrt.env_map_transform);
-      Mat4 env_inv = env_xfm.inverse();
-      // world_to_tex = inverse of the object-to-world env transform (3x3 upper-left)
-      env.world_to_tex[0] = env_inv.m[0][0]; env.world_to_tex[1] = env_inv.m[0][1]; env.world_to_tex[2] = env_inv.m[0][2];
-      env.world_to_tex[3] = env_inv.m[1][0]; env.world_to_tex[4] = env_inv.m[1][1]; env.world_to_tex[5] = env_inv.m[1][2];
-      env.world_to_tex[6] = env_inv.m[2][0]; env.world_to_tex[7] = env_inv.m[2][1]; env.world_to_tex[8] = env_inv.m[2][2];
-      // tex_to_world = the object-to-world env transform (3x3 upper-left)
-      env.tex_to_world[0] = env_xfm.m[0][0]; env.tex_to_world[1] = env_xfm.m[0][1]; env.tex_to_world[2] = env_xfm.m[0][2];
-      env.tex_to_world[3] = env_xfm.m[1][0]; env.tex_to_world[4] = env_xfm.m[1][1]; env.tex_to_world[5] = env_xfm.m[1][2];
-      env.tex_to_world[6] = env_xfm.m[2][0]; env.tex_to_world[7] = env_xfm.m[2][1]; env.tex_to_world[8] = env_xfm.m[2][2];
-      std::fprintf(stderr, "  Env map rotation applied (transform from scene)\n");
-      scene.env_map = env;
-      std::fprintf(stderr, "  Environment map: %s (%ux%u)\n", env_path.c_str(), env.width, env.height);
-    }
-  }
+  if (auto env = build_pbrt_env_map(pbrt, base_dir))
+    scene.env_map = std::move(*env);
 
-  Vec3 cam_pos, cam_dir, cam_up;
-
-  if (pbrt.camera.has_lookat) {
-    // LookAt positions are in world space — Scale before Camera only affects
-    // camera-internal handedness, not world-space eye/at/up coordinates.
-    cam_pos = {pbrt.camera.look_from.x, pbrt.camera.look_from.y, pbrt.camera.look_from.z};
-    Vec3 look_target = {pbrt.camera.look_at_pt.x, pbrt.camera.look_at_pt.y, pbrt.camera.look_at_pt.z};
-    cam_dir = normalize(look_target - cam_pos);
-    cam_up = normalize(Vec3{pbrt.camera.look_up.x, pbrt.camera.look_up.y, pbrt.camera.look_up.z});
-  } else {
-    Mat4 world_to_cam = mat4_from_pbrt_column_major(pbrt.camera.transform);
-    Mat4 cam_to_world = world_to_cam.inverse();
-    cam_pos = cam_to_world.transform_point({0, 0, 0});
-    cam_dir = normalize(cam_to_world.transform_direction({0, 0, 1}));
-    cam_up = normalize(cam_to_world.transform_direction({0, 1, 0}));
-  }
-
-  float aspect = float(pbrt.width) / float(pbrt.height);
-  result.camera = Camera::make_perspective(
-      cam_pos, cam_pos + cam_dir, cam_up, pbrt.camera.fov, aspect);
-  if (pbrt.camera.lensradius > 0.f) {
-    result.camera.lens_radius = pbrt.camera.lensradius;
-    result.camera.focus_dist = pbrt.camera.focaldistance > 0.f
-        ? pbrt.camera.focaldistance : length(cam_dir);
-  }
-
-  // Build format-agnostic instanced geometry for backends that support IAS.
-  if (!pbrt.object_defs.empty() && !pbrt.object_instances.empty()) {
-    auto &ig = result.instanced_geometry;
-
-    std::map<std::string, u32> obj_name_to_idx;
-    for (const auto &[name, meshes] : pbrt.object_defs) {
-      u32 idx = u32(ig.objects.size());
-      obj_name_to_idx[name] = idx;
-
-      // Merge all sub-meshes of this object into one ObjectMesh.
-      photon::pt::ObjectMesh obj;
-      uint64_t voff = 0;
-      for (const auto &m : meshes) {
-        const uint64_t nv = m.positions.size() / 3;
-
-        // Resolve material (last sub-mesh wins when multiple materials present)
-        u32 mid = 0;
-        auto it = mat_name_to_id.find(m.material_name);
-        if (it != mat_name_to_id.end()) mid = it->second;
-        obj.material_id = mid;
-
-        obj.positions.insert(obj.positions.end(),
-            m.positions.begin(), m.positions.end());
-        for (int idx_val : m.indices)
-          obj.indices.push_back(idx_val + int(voff));
-        if (m.normals.size() >= m.positions.size())
-          obj.normals.insert(obj.normals.end(),
-              m.normals.begin(), m.normals.end());
-        if (!m.uvs.empty())
-          obj.uvs.insert(obj.uvs.end(), m.uvs.begin(), m.uvs.end());
-
-        voff += nv;
-      }
-      ig.objects.push_back(std::move(obj));
-    }
-
-    for (const auto &inst : pbrt.object_instances) {
-      auto it = obj_name_to_idx.find(inst.object_name);
-      if (it == obj_name_to_idx.end()) continue;
-
-      photon::pt::Instance gi;
-      gi.object_id = it->second;
-      std::memcpy(gi.transform, inst.transform, sizeof(float) * 16);
-      ig.instances.push_back(gi);
-    }
-  }
+  result.camera = derive_pbrt_camera(pbrt);
+  result.instanced_geometry = build_pbrt_instanced_geometry(pbrt, mat_name_to_id);
 
   return result;
 }
 
-}
+} // namespace photon::pbrt
