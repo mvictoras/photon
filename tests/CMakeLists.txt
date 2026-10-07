@@ -20,7 +20,6 @@ add_executable(photon_integration_test integration_test.cpp)
 add_executable(photon_volume_test volume_test.cpp)
 add_executable(photon_anari_import_test anari_import_test.cpp)
 add_executable(photon_anari_lifecycle_test anari_lifecycle_test.cpp)
-add_executable(photon_anari_extension_test anari_extension_test.cpp)
 add_executable(photon_anari_refcount_test anari_refcount_test.cpp)
 add_executable(photon_anari_status_callback_test anari_status_callback_test.cpp)
 add_executable(photon_object_mesh_test object_mesh_test.cpp)
@@ -47,7 +46,6 @@ target_link_libraries(photon_integration_test PRIVATE anari_library_photon)
 target_link_libraries(photon_volume_test PRIVATE anari_library_photon)
 target_link_libraries(photon_anari_import_test PRIVATE anari_library_photon anari)
 target_link_libraries(photon_anari_lifecycle_test PRIVATE anari_library_photon)
-target_link_libraries(photon_anari_extension_test PRIVATE anari_library_photon anari)
 target_link_libraries(photon_anari_refcount_test PRIVATE anari_library_photon anari)
 target_link_libraries(photon_anari_status_callback_test PRIVATE anari_library_photon anari)
 target_link_libraries(photon_object_mesh_test PRIVATE anari_library_photon)
@@ -57,7 +55,6 @@ target_link_libraries(photon_upload_test PRIVATE anari_library_photon)
 
 target_include_directories(photon_anari_import_test PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
 target_include_directories(photon_anari_lifecycle_test PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
-target_include_directories(photon_anari_extension_test PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
 target_include_directories(photon_anari_refcount_test PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
 target_include_directories(photon_anari_status_callback_test PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
 
@@ -66,8 +63,6 @@ target_include_directories(photon_anari_status_callback_test PRIVATE "${CMAKE_BI
 # ANARI loader concatenates the location with the library file name, so the
 # trailing slash is required.
 set(PHOTON_ANARI_LIB_DIR "${CMAKE_BINARY_DIR}/src/")
-target_compile_definitions(photon_anari_extension_test
-    PRIVATE PHOTON_ANARI_LIB_DIR="${PHOTON_ANARI_LIB_DIR}")
 target_compile_definitions(photon_anari_refcount_test
     PRIVATE PHOTON_ANARI_LIB_DIR="${PHOTON_ANARI_LIB_DIR}")
 target_compile_definitions(photon_anari_status_callback_test
@@ -90,7 +85,6 @@ add_test(NAME photon_volume_test COMMAND $<TARGET_FILE:photon_volume_test>)
 
 add_test(NAME photon_anari_import_test COMMAND $<TARGET_FILE:photon_anari_import_test>)
 add_test(NAME photon_anari_lifecycle_test COMMAND $<TARGET_FILE:photon_anari_lifecycle_test>)
-add_test(NAME photon_anari_extension_test COMMAND $<TARGET_FILE:photon_anari_extension_test>)
 add_test(NAME photon_anari_refcount_test COMMAND $<TARGET_FILE:photon_anari_refcount_test>)
 add_test(NAME photon_anari_status_callback_test COMMAND $<TARGET_FILE:photon_anari_status_callback_test>)
 add_test(NAME photon_object_mesh_test COMMAND $<TARGET_FILE:photon_object_mesh_test>)

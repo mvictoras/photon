@@ -7,6 +7,8 @@
 
 #include <cstdio>
 
+#include "photon/anari/PhotonDevice.h"
+
 namespace {
 
 int warning_count = 0;
@@ -55,6 +57,11 @@ int main()
 
   // Render with no 'world' parameter set — a known warning path.
   anariRenderFrame(dev, frame);
+
+  // The device must still invoke the callback when ANARI supplies no message.
+  auto *photon_device = reinterpret_cast<photon::anari_device::PhotonDevice *>(dev);
+  photon_device->report((ANARIObject)dev, ANARI_DEVICE, ANARI_SEVERITY_WARNING,
+      ANARI_STATUS_UNKNOWN_ERROR, nullptr);
 
   if (warning_count == 0) {
     std::fprintf(stderr,

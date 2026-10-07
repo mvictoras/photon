@@ -31,9 +31,9 @@ bool read_param(const PhotonDevice::Object *obj, const char *name, T &out)
   if (!obj)
     return false;
   const auto it = obj->params.find(name);
-  if (it == obj->params.end() || it->second.size() != sizeof(T))
+  if (it == obj->params.end() || it->second.bytes.size() != sizeof(T))
     return false;
-  std::memcpy(&out, it->second.data(), sizeof(T));
+  std::memcpy(&out, it->second.bytes.data(), sizeof(T));
   return true;
 }
 
@@ -47,9 +47,9 @@ const char *read_string_param(const PhotonDevice::Object *obj, const char *name)
   if (!obj)
     return nullptr;
   const auto it = obj->params.find(name);
-  if (it == obj->params.end() || it->second.empty())
+  if (it == obj->params.end() || it->second.bytes.empty())
     return nullptr;
-  return reinterpret_cast<const char *>(it->second.data());
+  return reinterpret_cast<const char *>(it->second.bytes.data());
 }
 
 const PhotonDevice::Object *read_handle_object(

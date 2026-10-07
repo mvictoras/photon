@@ -6,7 +6,6 @@
 #include <string_view>
 
 #include "photon/anari/device.h"
-#include "photon/anari/PhotonDevice.h"
 
 namespace photon::anari_device {
 
@@ -16,10 +15,8 @@ struct Library : public anari::LibraryImpl
 {
   const char **getDeviceExtensions(const char *) override
   {
-    // Same list the device reports via anariGetObjectInfo(ANARI_DEVICE,
-    // "extension", ANARI_STRING_LIST) — this is what the CTS reads through
-    // anariGetDeviceExtensionStruct().
-    return photon::anari_device::photon_device_extensions();
+    static const char *exts[] = {nullptr};
+    return exts;
   }
 
   const char **getDeviceSubtypes() override

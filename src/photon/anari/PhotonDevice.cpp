@@ -16,10 +16,6 @@
 
 #include "photon/anari/SceneFromAnari.h"
 
-#if defined(KOKKOS_ENABLE_CUDA)
-#include <cuda_runtime.h>
-#endif
-
 namespace photon::anari_device {
 
 namespace {
@@ -36,22 +32,6 @@ char *copy_array_memory(const void *app_memory, size_t byte_count)
   if (app_memory && byte_count > 0)
     std::memcpy(buffer, app_memory, byte_count);
   return buffer;
-}
-
-void initialize_kokkos_for_anari()
-{
-#if defined(KOKKOS_ENABLE_CUDA)
-  int current_device = 0;
-  if (cudaGetDevice(&current_device) == cudaSuccess) {
-    Kokkos::InitializationSettings settings;
-    settings.set_device_id(current_device);
-    Kokkos::initialize(settings);
-  } else {
-    Kokkos::initialize();
-  }
-#else
-  Kokkos::initialize();
-#endif
 }
 
 size_t sizeof_anari(ANARIDataType type)
@@ -177,9 +157,8 @@ PhotonDevice::PhotonDevice(ANARILibrary library)
     m_defaultStatusCBUserPtr = lib->defaultStatusCBUserPtr();
   }
 
-  if (Kokkos::is_initialized())
-    return;
-  initialize_kokkos_for_anari();
+  if (!Kokkos::is_initialized())
+    Kokkos::initialize();
 }
 
 uintptr_t PhotonDevice::alloc_handle(ANARIDataType t)
@@ -206,30 +185,18 @@ static bool is_handle_type(ANARIDataType type)
       || type == ANARI_SPATIAL_FIELD || type == ANARI_DEVICE;
 }
 
-// Null-terminated list of the KHR extensions this device fully implements.
-// Keep in sync with getObjectSubtypes() and the renderer parameter list.
-static const char *g_device_extensions[] = {
-    "ANARI_KHR_GEOMETRY_TRIANGLE",
-    "ANARI_KHR_GEOMETRY_SPHERE",
-    "ANARI_KHR_GEOMETRY_CYLINDER",
-    "ANARI_KHR_CAMERA_PERSPECTIVE",
-    "ANARI_KHR_MATERIAL_MATTE",
-    "ANARI_KHR_MATERIAL_PHYSICALLY_BASED",
-    "ANARI_KHR_LIGHT_DIRECTIONAL",
-    "ANARI_KHR_LIGHT_POINT",
-    "ANARI_KHR_LIGHT_QUAD",
-    "ANARI_KHR_SAMPLER_IMAGE2D",
-    "ANARI_KHR_RENDERER_BACKGROUND_COLOR",
-    "ANARI_KHR_RENDERER_AMBIENT_LIGHT",
-    "ANARI_KHR_FRAME_CHANNEL_DEPTH",
-    "ANARI_KHR_FRAME_CHANNEL_NORMAL",
-    "ANARI_KHR_FRAME_CHANNEL_ALBEDO",
-    "ANARI_KHR_INSTANCE_TRANSFORM",
-    nullptr};
-
-const char **photon_device_extensions()
+void retain_array_handles(PhotonDevice &dev, PhotonDevice::Object &array)
 {
-  return g_device_extensions;
+  if (array.object_type != ANARI_ARRAY1D || !is_handle_type(array.array_element_type)
+      || !array.memory || array.owns_element_handles)
+    return;
+
+  const auto *handles = reinterpret_cast<const uintptr_t *>(array.memory);
+  for (uint64_t i = 0; i < array.array_num_items1; ++i) {
+    if (handles[i] != 0)
+      dev.retain((ANARIObject)handles[i]);
+  }
+  array.owns_element_handles = true;
 }
 
 ANARIArray1D PhotonDevice::newArray1D(
@@ -299,7 +266,12 @@ void *PhotonDevice::mapArray(ANARIArray a)
   return o ? const_cast<void *>(o->memory) : nullptr;
 }
 
-void PhotonDevice::unmapArray(ANARIArray) {}
+void PhotonDevice::unmapArray(ANARIArray a)
+{
+  auto *o = get((ANARIObject)a);
+  if (o)
+    retain_array_handles(*this, *o);
+}
 
 ANARIGeometry PhotonDevice::newGeometry(const char *type)
 {
@@ -307,8 +279,8 @@ ANARIGeometry PhotonDevice::newGeometry(const char *type)
   auto *o = get((ANARIObject)h);
   if (o && type) {
     const size_t n = std::strlen(type) + 1;
-    o->params["subtype"] = std::vector<std::byte>(n);
-    std::memcpy(o->params["subtype"].data(), type, n);
+    o->params["subtype"].bytes = std::vector<std::byte>(n);
+    std::memcpy(o->params["subtype"].bytes.data(), type, n);
   }
   return (ANARIGeometry)h;
 }
@@ -323,8 +295,8 @@ ANARILight PhotonDevice::newLight(const char *type)
   auto *o = get((ANARIObject)h);
   if (o && type) {
     const size_t n = std::strlen(type) + 1;
-    o->params["subtype"] = std::vector<std::byte>(n);
-    std::memcpy(o->params["subtype"].data(), type, n);
+    o->params["subtype"].bytes = std::vector<std::byte>(n);
+    std::memcpy(o->params["subtype"].bytes.data(), type, n);
   }
   return (ANARILight)h;
 }
@@ -335,8 +307,8 @@ ANARICamera PhotonDevice::newCamera(const char *type)
   auto *o = get((ANARIObject)h);
   if (o && type) {
     const size_t n = std::strlen(type) + 1;
-    o->params["subtype"] = std::vector<std::byte>(n);
-    std::memcpy(o->params["subtype"].data(), type, n);
+    o->params["subtype"].bytes = std::vector<std::byte>(n);
+    std::memcpy(o->params["subtype"].bytes.data(), type, n);
   }
   return (ANARICamera)h;
 }
@@ -348,8 +320,8 @@ ANARIMaterial PhotonDevice::newMaterial(const char *type)
   auto *o = get((ANARIObject)h);
   if (o && type) {
     const size_t n = std::strlen(type) + 1;
-    o->params["subtype"] = std::vector<std::byte>(n);
-    std::memcpy(o->params["subtype"].data(), type, n);
+    o->params["subtype"].bytes = std::vector<std::byte>(n);
+    std::memcpy(o->params["subtype"].bytes.data(), type, n);
   }
   return (ANARIMaterial)h;
 }
@@ -360,8 +332,8 @@ ANARISampler PhotonDevice::newSampler(const char *type)
   auto *o = get((ANARIObject)h);
   if (o && type) {
     const size_t n = std::strlen(type) + 1;
-    o->params["subtype"] = std::vector<std::byte>(n);
-    std::memcpy(o->params["subtype"].data(), type, n);
+    o->params["subtype"].bytes = std::vector<std::byte>(n);
+    std::memcpy(o->params["subtype"].bytes.data(), type, n);
   }
   return (ANARISampler)h;
 }
@@ -374,8 +346,8 @@ ANARIInstance PhotonDevice::newInstance(const char *type)
   auto *o = get((ANARIObject)h);
   if (o && type) {
     const size_t n = std::strlen(type) + 1;
-    o->params["subtype"] = std::vector<std::byte>(n);
-    std::memcpy(o->params["subtype"].data(), type, n);
+    o->params["subtype"].bytes = std::vector<std::byte>(n);
+    std::memcpy(o->params["subtype"].bytes.data(), type, n);
   }
   return (ANARIInstance)h;
 }
@@ -417,7 +389,8 @@ const void *PhotonDevice::getObjectInfo(
   if (objectType == ANARI_DEVICE && infoName
       && std::strcmp(infoName, "extension") == 0
       && infoType == ANARI_STRING_LIST) {
-    return photon_device_extensions();
+    static const char *extensions[] = {nullptr};
+    return extensions;
   }
 
   // Renderer "default" — report available parameters
@@ -649,8 +622,8 @@ int PhotonDevice::getProperty(ANARIObject object, const char *name, ANARIDataTyp
         return;
       uintptr_t geom_h = 0;
       auto git = so->params.find("geometry");
-      if (git != so->params.end() && git->second.size() == sizeof(uintptr_t))
-        std::memcpy(&geom_h, git->second.data(), sizeof(uintptr_t));
+      if (git != so->params.end() && git->second.bytes.size() == sizeof(uintptr_t))
+        std::memcpy(&geom_h, git->second.bytes.data(), sizeof(uintptr_t));
       if (geom_h == 0)
         return;
       auto *go = get((ANARIObject)geom_h);
@@ -658,8 +631,8 @@ int PhotonDevice::getProperty(ANARIObject object, const char *name, ANARIDataTyp
         return;
       uintptr_t pos_h = 0;
       auto pit = go->params.find("vertex.position");
-      if (pit != go->params.end() && pit->second.size() == sizeof(uintptr_t))
-        std::memcpy(&pos_h, pit->second.data(), sizeof(uintptr_t));
+      if (pit != go->params.end() && pit->second.bytes.size() == sizeof(uintptr_t))
+        std::memcpy(&pos_h, pit->second.bytes.data(), sizeof(uintptr_t));
       if (pos_h == 0)
         return;
       auto *pa = get((ANARIObject)pos_h);
@@ -673,9 +646,9 @@ int PhotonDevice::getProperty(ANARIObject object, const char *name, ANARIDataTyp
     auto scan_array = [&](const char *param_name, ANARIDataType /*elem_type*/, auto handler) {
       uintptr_t arr_h = 0;
       auto ait = wo->params.find(param_name);
-      if (ait == wo->params.end() || ait->second.size() != sizeof(uintptr_t))
+      if (ait == wo->params.end() || ait->second.bytes.size() != sizeof(uintptr_t))
         return;
-      std::memcpy(&arr_h, ait->second.data(), sizeof(uintptr_t));
+      std::memcpy(&arr_h, ait->second.bytes.data(), sizeof(uintptr_t));
       if (arr_h == 0)
         return;
       auto *arr = get((ANARIObject)arr_h);
@@ -694,8 +667,8 @@ int PhotonDevice::getProperty(ANARIObject object, const char *name, ANARIDataTyp
         return;
       uintptr_t group_h = 0;
       auto git = inst->params.find("group");
-      if (git != inst->params.end() && git->second.size() == sizeof(uintptr_t))
-        std::memcpy(&group_h, git->second.data(), sizeof(uintptr_t));
+      if (git != inst->params.end() && git->second.bytes.size() == sizeof(uintptr_t))
+        std::memcpy(&group_h, git->second.bytes.data(), sizeof(uintptr_t));
       if (group_h == 0)
         return;
       auto *grp = get((ANARIObject)group_h);
@@ -703,8 +676,8 @@ int PhotonDevice::getProperty(ANARIObject object, const char *name, ANARIDataTyp
         return;
       uintptr_t gsarr_h = 0;
       auto sit = grp->params.find("surface");
-      if (sit != grp->params.end() && sit->second.size() == sizeof(uintptr_t))
-        std::memcpy(&gsarr_h, sit->second.data(), sizeof(uintptr_t));
+      if (sit != grp->params.end() && sit->second.bytes.size() == sizeof(uintptr_t))
+        std::memcpy(&gsarr_h, sit->second.bytes.data(), sizeof(uintptr_t));
       if (gsarr_h == 0)
         return;
       auto *gsa = get((ANARIObject)gsarr_h);
@@ -714,8 +687,8 @@ int PhotonDevice::getProperty(ANARIObject object, const char *name, ANARIDataTyp
       float xfm_raw[16];
       bool has_xfm = false;
       auto xit = inst->params.find("transform");
-      if (xit != inst->params.end() && xit->second.size() == 16 * sizeof(float)) {
-        std::memcpy(xfm_raw, xit->second.data(), sizeof(xfm_raw));
+      if (xit != inst->params.end() && xit->second.bytes.size() == 16 * sizeof(float)) {
+        std::memcpy(xfm_raw, xit->second.bytes.data(), sizeof(xfm_raw));
         has_xfm = true;
       }
 
@@ -726,15 +699,15 @@ int PhotonDevice::getProperty(ANARIObject object, const char *name, ANARIDataTyp
           continue;
         uintptr_t gg = 0;
         auto ggi = sso->params.find("geometry");
-        if (ggi != sso->params.end() && ggi->second.size() == sizeof(uintptr_t))
-          std::memcpy(&gg, ggi->second.data(), sizeof(uintptr_t));
+        if (ggi != sso->params.end() && ggi->second.bytes.size() == sizeof(uintptr_t))
+          std::memcpy(&gg, ggi->second.bytes.data(), sizeof(uintptr_t));
         if (gg == 0) continue;
         auto *ggo = get((ANARIObject)gg);
         if (!ggo || ggo->object_type != ANARI_GEOMETRY) continue;
         uintptr_t pp = 0;
         auto ppi = ggo->params.find("vertex.position");
-        if (ppi != ggo->params.end() && ppi->second.size() == sizeof(uintptr_t))
-          std::memcpy(&pp, ppi->second.data(), sizeof(uintptr_t));
+        if (ppi != ggo->params.end() && ppi->second.bytes.size() == sizeof(uintptr_t))
+          std::memcpy(&pp, ppi->second.bytes.data(), sizeof(uintptr_t));
         if (pp == 0) continue;
         auto *ppa = get((ANARIObject)pp);
         if (!ppa || ppa->object_type != ANARI_ARRAY1D || !ppa->memory || ppa->array_element_type != ANARI_FLOAT32_VEC3) continue;
@@ -764,6 +737,23 @@ int PhotonDevice::getProperty(ANARIObject object, const char *name, ANARIDataTyp
   return 0;
 }
 
+namespace {
+
+using ParameterValue = PhotonDevice::Object::ParameterValue;
+
+void release_stored_handle(PhotonDevice &dev, const ParameterValue &value)
+{
+  if (!is_handle_type(value.type) || value.bytes.size() != sizeof(uintptr_t))
+    return;
+
+  uintptr_t h = 0;
+  std::memcpy(&h, value.bytes.data(), sizeof(uintptr_t));
+  if (h != 0 && dev.getObject(h) != nullptr)
+    dev.release((ANARIObject)h);
+}
+
+} // namespace
+
 void PhotonDevice::setParameter(ANARIObject object, const char *name, ANARIDataType type, const void *mem)
 {
   auto *o = get(object);
@@ -771,15 +761,9 @@ void PhotonDevice::setParameter(ANARIObject object, const char *name, ANARIDataT
     return;
 
   auto prev = o->params.find(name);
-  auto prev_type = o->param_types.find(name);
   auto release_previous_parameter = [&]() {
-    if (prev != o->params.end() && prev_type != o->param_types.end()
-        && is_handle_type(prev_type->second)) {
-      uintptr_t old_h = 0;
-      std::memcpy(&old_h, prev->second.data(), sizeof(uintptr_t));
-      if (old_h != 0)
-        release((ANARIObject)old_h);
-    }
+    if (prev != o->params.end())
+      release_stored_handle(*this, prev->second);
   };
 
   if (type == ANARI_ARRAY1D || type == ANARI_ARRAY2D || type == ANARI_ARRAY3D || type == ANARI_GEOMETRY
@@ -797,8 +781,9 @@ void PhotonDevice::setParameter(ANARIObject object, const char *name, ANARIDataT
 
     std::vector<std::byte> bytes(sizeof(uintptr_t));
     std::memcpy(bytes.data(), &h, sizeof(uintptr_t));
-    o->params[name] = std::move(bytes);
-    o->param_types[name] = type;
+    auto &value = o->params[name];
+    value.bytes = std::move(bytes);
+    value.type = type;
     return;
   }
 
@@ -811,8 +796,9 @@ void PhotonDevice::setParameter(ANARIObject object, const char *name, ANARIDataT
     std::vector<std::byte> bytes(n);
     std::memcpy(bytes.data(), s, n);
     release_previous_parameter();
-    o->params[name] = std::move(bytes);
-    o->param_types[name] = type;
+    auto &value = o->params[name];
+    value.bytes = std::move(bytes);
+    value.type = type;
     return;
   }
 
@@ -820,26 +806,10 @@ void PhotonDevice::setParameter(ANARIObject object, const char *name, ANARIDataT
   std::vector<std::byte> bytes(n);
   std::memcpy(bytes.data(), mem, n);
   release_previous_parameter();
-  o->params[name] = std::move(bytes);
-  o->param_types[name] = type;
+  auto &value = o->params[name];
+  value.bytes = std::move(bytes);
+  value.type = type;
 }
-
-namespace {
-
-// If the stored parameter bytes hold a valid object handle, release it.
-// (Mirrors the retain in setParameter when a handle parameter is replaced.)
-void release_stored_handle(PhotonDevice &dev, ANARIDataType type,
-    const std::vector<std::byte> &bytes)
-{
-  if (!is_handle_type(type) || bytes.size() != sizeof(uintptr_t))
-    return;
-  uintptr_t h = 0;
-  std::memcpy(&h, bytes.data(), sizeof(uintptr_t));
-  if (h != 0 && dev.getObject(h) != nullptr)
-    dev.release((ANARIObject)h);
-}
-
-} // namespace
 
 void PhotonDevice::unsetParameter(ANARIObject object, const char *name)
 {
@@ -851,12 +821,9 @@ void PhotonDevice::unsetParameter(ANARIObject object, const char *name)
   if (it == o->params.end())
     return;
 
-  auto type_it = o->param_types.find(name);
-  if (type_it != o->param_types.end())
-    release_stored_handle(*this, type_it->second, it->second);
+  release_stored_handle(*this, it->second);
 
   o->params.erase(it);
-  o->param_types.erase(name);
 }
 
 void PhotonDevice::unsetAllParameters(ANARIObject object)
@@ -865,14 +832,10 @@ void PhotonDevice::unsetAllParameters(ANARIObject object)
   if (!o)
     return;
 
-  for (const auto &entry : o->params) {
-    auto type_it = o->param_types.find(entry.first);
-    if (type_it != o->param_types.end())
-      release_stored_handle(*this, type_it->second, entry.second);
-  }
+  for (const auto &entry : o->params)
+    release_stored_handle(*this, entry.second);
 
   o->params.clear();
-  o->param_types.clear();
 }
 
 void PhotonDevice::commitParameters(ANARIObject object)
@@ -917,10 +880,9 @@ void PhotonDevice::release(ANARIObject object)
   auto *o = it->second.get();
 
   // Arrays of handles own a reference to every non-null handle they contain
-  // when the contents came in via appMemory (newArray1D) or were retained in
-  // unmapParameterArray — release them before the buffer is freed. Only 1D
-  // arrays can own element handles. Arrays filled via mapArray alone do NOT
-  // own their contents and must not release them.
+  // when the contents came in via appMemory (newArray1D) or were retained
+  // when a mapped array was unmapped. Release those references before the
+  // buffer is freed.
   if (o->owns_element_handles && o->object_type == ANARI_ARRAY1D
       && is_handle_type(o->array_element_type) && o->memory) {
     const auto *handles = reinterpret_cast<const uintptr_t *>(o->memory);
@@ -983,23 +945,16 @@ void PhotonDevice::unmapParameterArray(ANARIObject object, const char *name)
     return;
 
   auto it = o->params.find(name);
-  if (it == o->params.end() || it->second.size() != sizeof(uintptr_t))
+  if (it == o->params.end() || it->second.bytes.size() != sizeof(uintptr_t))
     return;
 
   uintptr_t arr_h = 0;
-  std::memcpy(&arr_h, it->second.data(), sizeof(uintptr_t));
+  std::memcpy(&arr_h, it->second.bytes.data(), sizeof(uintptr_t));
   auto *arr = get((ANARIObject)arr_h);
   if (!arr || !arr->memory)
     return;
 
-  if (is_handle_type(arr->array_element_type)) {
-    const auto *handles = reinterpret_cast<const uintptr_t *>(arr->memory);
-    for (uint64_t i = 0; i < arr->array_num_items1; ++i) {
-      if (handles[i] != 0)
-        retain((ANARIObject)handles[i]);
-    }
-    arr->owns_element_handles = true;
-  }
+  retain_array_handles(*this, *arr);
 }
 
 const void *PhotonDevice::frameBufferMap(ANARIFrame fb, const char *channel, uint32_t *w, uint32_t *h, ANARIDataType *t)
@@ -1017,8 +972,8 @@ const void *PhotonDevice::frameBufferMap(ANARIFrame fb, const char *channel, uin
 
   uint32_t size[2] = {512u, 512u};
   auto it = o->params.find("size");
-  if (it != o->params.end() && it->second.size() == sizeof(size))
-    std::memcpy(size, it->second.data(), sizeof(size));
+  if (it != o->params.end() && it->second.bytes.size() == sizeof(size))
+    std::memcpy(size, it->second.bytes.data(), sizeof(size));
 
   m_fb_w = size[0];
   m_fb_h = size[1];
@@ -1148,16 +1103,16 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
 
   uint32_t size[2] = {512u, 512u};
   auto it = o->params.find("size");
-  if (it != o->params.end() && it->second.size() == sizeof(size))
-    std::memcpy(size, it->second.data(), sizeof(size));
+  if (it != o->params.end() && it->second.bytes.size() == sizeof(size))
+    std::memcpy(size, it->second.bytes.data(), sizeof(size));
 
   m_fb_w = size[0];
   m_fb_h = size[1];
 
   uintptr_t world_h = 0;
   auto wit = o->params.find("world");
-  if (wit != o->params.end() && wit->second.size() == sizeof(uintptr_t))
-    std::memcpy(&world_h, wit->second.data(), sizeof(uintptr_t));
+  if (wit != o->params.end() && wit->second.bytes.size() == sizeof(uintptr_t))
+    std::memcpy(&world_h, wit->second.bytes.data(), sizeof(uintptr_t));
 
   if (world_h == 0 || get((ANARIObject)world_h) == nullptr) {
     report((ANARIObject)fb, ANARI_FRAME, ANARI_SEVERITY_WARNING,
@@ -1167,8 +1122,8 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
 
   uintptr_t renderer_h = 0;
   auto rit = o->params.find("renderer");
-  if (rit != o->params.end() && rit->second.size() == sizeof(uintptr_t))
-    std::memcpy(&renderer_h, rit->second.data(), sizeof(uintptr_t));
+  if (rit != o->params.end() && rit->second.bytes.size() == sizeof(uintptr_t))
+    std::memcpy(&renderer_h, rit->second.bytes.data(), sizeof(uintptr_t));
 
   uint32_t spp = 1;
   uint32_t max_depth = 5;
@@ -1181,10 +1136,10 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
       // before casting to uint32_t.
       auto read_i32 = [&](const char *name, int32_t default_value) {
         auto pit = ro->params.find(name);
-        if (pit == ro->params.end() || pit->second.size() != sizeof(int32_t))
+        if (pit == ro->params.end() || pit->second.bytes.size() != sizeof(int32_t))
           return default_value;
         int32_t value = 0;
-        std::memcpy(&value, pit->second.data(), sizeof(int32_t));
+        std::memcpy(&value, pit->second.bytes.data(), sizeof(int32_t));
         return value;
       };
 
@@ -1228,21 +1183,21 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
     auto *ro = get((ANARIObject)renderer_h);
     if (ro) {
       auto pit = ro->params.find("background");
-      if (pit != ro->params.end() && pit->second.size() == 4 * sizeof(float))
-        std::memcpy(bg_rgba, pit->second.data(), 4 * sizeof(float));
+      if (pit != ro->params.end() && pit->second.bytes.size() == 4 * sizeof(float))
+        std::memcpy(bg_rgba, pit->second.bytes.data(), 4 * sizeof(float));
 
       pit = ro->params.find("ambientColor");
-      if (pit != ro->params.end() && pit->second.size() == 3 * sizeof(float))
-        std::memcpy(ambient_color, pit->second.data(), 3 * sizeof(float));
+      if (pit != ro->params.end() && pit->second.bytes.size() == 3 * sizeof(float))
+        std::memcpy(ambient_color, pit->second.bytes.data(), 3 * sizeof(float));
 
       pit = ro->params.find("ambientRadiance");
-      if (pit != ro->params.end() && pit->second.size() == sizeof(float))
-        std::memcpy(&ambient_radiance, pit->second.data(), sizeof(float));
+      if (pit != ro->params.end() && pit->second.bytes.size() == sizeof(float))
+        std::memcpy(&ambient_radiance, pit->second.bytes.data(), sizeof(float));
 
 #ifdef PHOTON_HAS_OIDN
       pit = ro->params.find("denoise");
-      if (pit != ro->params.end() && pit->second.size() == sizeof(int32_t))
-        std::memcpy(&denoise, pit->second.data(), sizeof(int32_t));
+      if (pit != ro->params.end() && pit->second.bytes.size() == sizeof(int32_t))
+        std::memcpy(&denoise, pit->second.bytes.data(), sizeof(int32_t));
 #endif
     }
   }
@@ -1300,8 +1255,8 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
     auto *ro = get((ANARIObject)renderer_h);
     if (ro) {
       auto pit = ro->params.find("sampleLimit");
-      if (pit != ro->params.end() && pit->second.size() == sizeof(int32_t))
-        std::memcpy(&max_samples, pit->second.data(), sizeof(int32_t));
+      if (pit != ro->params.end() && pit->second.bytes.size() == sizeof(int32_t))
+        std::memcpy(&max_samples, pit->second.bytes.data(), sizeof(int32_t));
     }
   }
 
@@ -1426,10 +1381,11 @@ void PhotonDevice::report(ANARIObject source, ANARIDataType sourceType,
     ANARIStatusSeverity severity, ANARIStatusCode code, const char *msg)
 {
   // Forward to the status callback registered at anariLoadLibrary() time.
-  if (!m_defaultStatusCB || !msg)
+  if (!m_defaultStatusCB)
     return;
+  const char *message = msg ? msg : "";
   m_defaultStatusCB(m_defaultStatusCBUserPtr, this_device(), source, sourceType,
-      severity, code, msg);
+      severity, code, message);
 }
 
 void PhotonDevice::discardFrame(ANARIFrame) {}

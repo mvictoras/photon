@@ -52,6 +52,32 @@ void array_of_handles_release_frees_elements(PhotonDevice &dev)
       "surface in released handle-array was not freed");
 }
 
+// A mapped handle array retains handles when it is unmapped, so destroying
+// the array releases exactly the reference it owns.
+void mapped_array_release_frees_elements(PhotonDevice &dev)
+{
+  ANARISurface surface = dev.newSurface();
+  ANARIArray1D array =
+      dev.newArray1D(nullptr, nullptr, nullptr, ANARI_SURFACE, 1);
+  auto *handles = static_cast<ANARISurface *>(dev.mapArray(array));
+  expect(handles != nullptr, "could not map handle array");
+  if (!handles) {
+    dev.release(array);
+    dev.release(surface);
+    return;
+  }
+
+  handles[0] = surface;
+  dev.unmapArray(array);
+  dev.release(surface);
+  expect(dev.getObject((uintptr_t)surface) != nullptr,
+      "mapped handle was not retained on unmap");
+
+  dev.release(array);
+  expect(dev.getObject((uintptr_t)surface) == nullptr,
+      "mapped handle was not released with its array");
+}
+
 // unsetParameter() releases the handle stored in the parameter slot.
 void unset_parameter_releases_handle(PhotonDevice &dev)
 {
@@ -135,6 +161,7 @@ int main(int argc, char **argv)
     PhotonDevice dev(nullptr);
 
     array_of_handles_release_frees_elements(dev);
+    mapped_array_release_frees_elements(dev);
     unset_parameter_releases_handle(dev);
     unset_all_parameters_releases_handles(dev);
     pixel_samples_int32_is_used_exactly(dev);

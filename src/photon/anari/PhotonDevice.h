@@ -22,12 +22,6 @@
 
 namespace photon::anari_device {
 
-// Null-terminated list of the KHR extensions implemented by this device.
-// Shared between the device-level query (anariGetObjectInfo with
-// ANARI_DEVICE / "extension" / ANARI_STRING_LIST) and the library-level
-// query (anariGetDeviceExtensions).
-const char **photon_device_extensions();
-
 struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
 {
   explicit PhotonDevice(ANARILibrary library);
@@ -104,12 +98,16 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
 
     // True when this device owns a reference to every handle stored in the
     // array's buffer (contents given at creation via appMemory, or retained
-    // in unmapParameterArray). Arrays filled via mapArray alone do NOT own
-    // their contents and must not release them.
+    // when a mapped array is unmapped).
     bool owns_element_handles{false};
 
-    std::unordered_map<std::string, std::vector<std::byte>> params;
-    std::unordered_map<std::string, ANARIDataType> param_types;
+    struct ParameterValue
+    {
+      std::vector<std::byte> bytes;
+      ANARIDataType type{ANARI_UNKNOWN};
+    };
+
+    std::unordered_map<std::string, ParameterValue> params;
   };
 
   Object *getObject(uintptr_t handle) const { return const_cast<PhotonDevice *>(this)->get((ANARIObject)handle); }

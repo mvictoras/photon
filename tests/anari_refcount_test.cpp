@@ -67,7 +67,8 @@ int main()
   anariUnsetAllParameters(dev, world);
   anariRelease(dev, (ANARIObject)world);
 
-  // An empty mapped array does not own handles written by the caller.
+  // A mapped handle array retains handles on unmap and releases them when the
+  // array is destroyed.
   ANARISurface mapped_surface = anariNewSurface(dev);
   ANARIArray1D mapped = anariNewArray1D(
       dev, nullptr, nullptr, nullptr, ANARI_SURFACE, 1);
@@ -76,8 +77,10 @@ int main()
   if (mapped_memory)
     mapped_memory[0] = mapped_surface;
   anariUnmapArray(dev, mapped);
-  anariRelease(dev, (ANARIObject)mapped);
   anariRelease(dev, (ANARIObject)mapped_surface);
+  expect(status_errors == 0,
+      "mapped handle was released before the array was destroyed");
+  anariRelease(dev, (ANARIObject)mapped);
 
   // An 8-byte non-handle parameter must not be mistaken for an object handle.
   ANARIFrame frame = anariNewFrame(dev);
