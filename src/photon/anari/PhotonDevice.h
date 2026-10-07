@@ -22,6 +22,12 @@
 
 namespace photon::anari_device {
 
+// Null-terminated list of the KHR extensions implemented by this device.
+// Shared between the device-level query (anariGetObjectInfo with
+// ANARI_DEVICE / "extension" / ANARI_STRING_LIST) and the library-level
+// query (anariGetDeviceExtensions).
+const char **photon_device_extensions();
+
 struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
 {
   explicit PhotonDevice(ANARILibrary library);

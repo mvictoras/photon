@@ -16,6 +16,10 @@
 
 #include "photon/anari/SceneFromAnari.h"
 
+#if defined(KOKKOS_ENABLE_CUDA)
+#include <cuda_runtime.h>
+#endif
+
 namespace photon::anari_device {
 
 namespace {
@@ -137,10 +141,34 @@ size_t bytes_for(ANARIDataType type, uint64_t n1, uint64_t n2 = 1, uint64_t n3 =
 
 }
 
-PhotonDevice::PhotonDevice(ANARILibrary)
+PhotonDevice::PhotonDevice(ANARILibrary library)
 {
-  if (!Kokkos::is_initialized())
-    Kokkos::initialize();
+  // Pick up the status callback registered at anariLoadLibrary() time.
+  // DeviceImpl's library-argument constructor dereferences a null library,
+  // and this device may be constructed directly (nullptr) by tests, so
+  // mirror its behavior here only when a library is present.
+  if (library) {
+    auto *lib = reinterpret_cast<anari::LibraryImpl *>(library);
+    m_defaultStatusCB = lib->defaultStatusCB();
+    m_defaultStatusCBUserPtr = lib->defaultStatusCBUserPtr();
+  }
+
+  if (Kokkos::is_initialized())
+    return;
+
+#if defined(KOKKOS_ENABLE_CUDA)
+  // A host application (e.g. a CUDA-enabled ParaView) may already own a CUDA
+  // context. Bind Kokkos to the caller's current CUDA device instead of
+  // letting Kokkos choose one on its own — an unpinned Kokkos::initialize()
+  // is known to crash hosts with a pre-existing context on some drivers.
+  int current_device = 0;
+  cudaGetDevice(&current_device);
+  Kokkos::InitializationSettings settings;
+  settings.set_device_id(current_device);
+  Kokkos::initialize(settings);
+#else
+  Kokkos::initialize();
+#endif
 }
 
 uintptr_t PhotonDevice::alloc_handle(ANARIDataType t)
@@ -165,6 +193,32 @@ static bool is_handle_type(ANARIDataType type)
       || type == ANARI_LIGHT || type == ANARI_MATERIAL || type == ANARI_GROUP
       || type == ANARI_INSTANCE || type == ANARI_SAMPLER || type == ANARI_VOLUME
       || type == ANARI_SPATIAL_FIELD || type == ANARI_DEVICE;
+}
+
+// Null-terminated list of the KHR extensions this device fully implements.
+// Keep in sync with getObjectSubtypes() and the renderer parameter list.
+static const char *g_device_extensions[] = {
+    "ANARI_KHR_GEOMETRY_TRIANGLE",
+    "ANARI_KHR_GEOMETRY_SPHERE",
+    "ANARI_KHR_GEOMETRY_CYLINDER",
+    "ANARI_KHR_CAMERA_PERSPECTIVE",
+    "ANARI_KHR_MATERIAL_MATTE",
+    "ANARI_KHR_MATERIAL_PHYSICALLY_BASED",
+    "ANARI_KHR_LIGHT_DIRECTIONAL",
+    "ANARI_KHR_LIGHT_POINT",
+    "ANARI_KHR_LIGHT_QUAD",
+    "ANARI_KHR_SAMPLER_IMAGE2D",
+    "ANARI_KHR_RENDERER_BACKGROUND_COLOR",
+    "ANARI_KHR_RENDERER_AMBIENT_LIGHT",
+    "ANARI_KHR_FRAME_CHANNEL_DEPTH",
+    "ANARI_KHR_FRAME_CHANNEL_NORMAL",
+    "ANARI_KHR_FRAME_CHANNEL_ALBEDO",
+    "ANARI_KHR_INSTANCE_TRANSFORM",
+    nullptr};
+
+const char **photon_device_extensions()
+{
+  return g_device_extensions;
 }
 
 ANARIArray1D PhotonDevice::newArray1D(
@@ -357,8 +411,7 @@ const void *PhotonDevice::getObjectInfo(
   if (objectType == ANARI_DEVICE && infoName
       && std::strcmp(infoName, "extension") == 0
       && infoType == ANARI_STRING_LIST) {
-    static const char *extensions[] = {nullptr};
-    return extensions;
+    return photon_device_extensions();
   }
 
   // Renderer "default" — report available parameters
@@ -754,12 +807,35 @@ void PhotonDevice::setParameter(ANARIObject object, const char *name, ANARIDataT
   o->params[name] = std::move(bytes);
 }
 
+namespace {
+
+// If the stored parameter bytes hold a valid object handle, release it.
+// (Mirrors the retain in setParameter when a handle parameter is replaced.)
+void release_stored_handle(PhotonDevice &dev, const std::vector<std::byte> &bytes)
+{
+  if (bytes.size() != sizeof(uintptr_t))
+    return;
+  uintptr_t h = 0;
+  std::memcpy(&h, bytes.data(), sizeof(uintptr_t));
+  if (h != 0 && dev.getObject(h) != nullptr)
+    dev.release((ANARIObject)h);
+}
+
+} // namespace
+
 void PhotonDevice::unsetParameter(ANARIObject object, const char *name)
 {
   auto *o = get(object);
   if (!o || !name)
     return;
-  o->params.erase(name);
+
+  auto it = o->params.find(name);
+  if (it == o->params.end())
+    return;
+
+  release_stored_handle(*this, it->second);
+
+  o->params.erase(it);
 }
 
 void PhotonDevice::unsetAllParameters(ANARIObject object)
@@ -767,6 +843,10 @@ void PhotonDevice::unsetAllParameters(ANARIObject object)
   auto *o = get(object);
   if (!o)
     return;
+
+  for (const auto &entry : o->params)
+    release_stored_handle(*this, entry.second);
+
   o->params.clear();
 }
 
@@ -809,8 +889,22 @@ void PhotonDevice::release(ANARIObject object)
   if (it->second->refcount > 0)
     return;
 
-  if (it->second->deleter)
-    it->second->deleter(it->second->userdata, it->second->memory);
+  auto *o = it->second.get();
+
+  // Arrays of handles own a reference to every non-null handle they contain
+  // (retained in newArray1D); release them before the buffer is freed. Only
+  // 1D arrays retain their contents, so only they release.
+  if (o->object_type == ANARI_ARRAY1D && is_handle_type(o->array_element_type)
+      && o->memory) {
+    const auto *handles = reinterpret_cast<const uintptr_t *>(o->memory);
+    for (uint64_t i = 0; i < o->array_num_items1; ++i) {
+      if (handles[i] != 0)
+        release((ANARIObject)handles[i]);
+    }
+  }
+
+  if (o->deleter)
+    o->deleter(o->userdata, o->memory);
 
   m_objects.erase(it);
 }
@@ -1037,6 +1131,12 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
   if (wit != o->params.end() && wit->second.size() == sizeof(uintptr_t))
     std::memcpy(&world_h, wit->second.data(), sizeof(uintptr_t));
 
+  if (world_h == 0 || get((ANARIObject)world_h) == nullptr) {
+    report((ANARIObject)fb, ANARI_FRAME, ANARI_SEVERITY_WARNING,
+        ANARI_STATUS_INVALID_OPERATION,
+        "renderFrame: frame has no valid 'world' parameter; rendering fallback scene");
+  }
+
   uintptr_t renderer_h = 0;
   auto rit = o->params.find("renderer");
   if (rit != o->params.end() && rit->second.size() == sizeof(uintptr_t))
@@ -1048,25 +1148,43 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
   if (renderer_h != 0) {
     auto *ro = get((ANARIObject)renderer_h);
     if (ro) {
-      auto pit = ro->params.find("samples_per_pixel");
-      if (pit != ro->params.end() && pit->second.size() == sizeof(uint32_t))
-        std::memcpy(&spp, pit->second.data(), sizeof(uint32_t));
-      pit = ro->params.find("spp");
-      if (pit != ro->params.end() && pit->second.size() == sizeof(uint32_t))
-        std::memcpy(&spp, pit->second.data(), sizeof(uint32_t));
-      pit = ro->params.find("pixelSamples");
-      if (pit != ro->params.end() && pit->second.size() == sizeof(uint32_t))
-        std::memcpy(&spp, pit->second.data(), sizeof(uint32_t));
+      // The integer renderer parameters are declared ANARI_INT32 in
+      // getObjectInfo/getParameterInfo — read them as int32_t and range-check
+      // before casting to uint32_t.
+      auto read_i32 = [&](const char *name, int32_t default_value) {
+        auto pit = ro->params.find(name);
+        if (pit == ro->params.end() || pit->second.size() != sizeof(int32_t))
+          return default_value;
+        int32_t value = 0;
+        std::memcpy(&value, pit->second.data(), sizeof(int32_t));
+        return value;
+      };
 
-      pit = ro->params.find("max_depth");
-      if (pit != ro->params.end() && pit->second.size() == sizeof(uint32_t))
-        std::memcpy(&max_depth, pit->second.data(), sizeof(uint32_t));
-      pit = ro->params.find("maxDepth");
-      if (pit != ro->params.end() && pit->second.size() == sizeof(uint32_t))
-        std::memcpy(&max_depth, pit->second.data(), sizeof(uint32_t));
-      pit = ro->params.find("maxRayDepth");
-      if (pit != ro->params.end() && pit->second.size() == sizeof(uint32_t))
-        std::memcpy(&max_depth, pit->second.data(), sizeof(uint32_t));
+      const int32_t spp_raw = read_i32("samples_per_pixel", -1);
+      if (spp_raw > 0)
+        spp = uint32_t(spp_raw);
+      int32_t pixel_samples = read_i32("spp", -1);
+      if (pixel_samples > 0)
+        spp = uint32_t(pixel_samples);
+      // The canonical name declared via getObjectInfo is "pixelSamples"
+      // (ANARI_INT32); read last so it wins over the aliases.
+      pixel_samples = read_i32("pixelSamples", -1);
+      if (pixel_samples > 0)
+        spp = uint32_t(pixel_samples);
+      else if (pixel_samples == 0)
+        report((ANARIObject)fb, ANARI_FRAME, ANARI_SEVERITY_WARNING,
+            ANARI_STATUS_INVALID_ARGUMENT,
+            "renderer 'pixelSamples' is 0; using 1 sample per pixel");
+
+      int32_t depth_raw = read_i32("max_depth", -1);
+      if (depth_raw > 0)
+        max_depth = uint32_t(depth_raw);
+      depth_raw = read_i32("maxDepth", -1);
+      if (depth_raw > 0)
+        max_depth = uint32_t(depth_raw);
+      depth_raw = read_i32("maxRayDepth", -1);
+      if (depth_raw > 0)
+        max_depth = uint32_t(depth_raw);
     }
   }
 
@@ -1276,7 +1394,15 @@ void PhotonDevice::renderFrame(ANARIFrame fb)
 
 int PhotonDevice::frameReady(ANARIFrame, ANARIWaitMask) { return 1; }
 
-void PhotonDevice::report(ANARIObject, ANARIDataType, ANARIStatusSeverity, ANARIStatusCode, const char *) {}
+void PhotonDevice::report(ANARIObject source, ANARIDataType sourceType,
+    ANARIStatusSeverity severity, ANARIStatusCode code, const char *msg)
+{
+  // Forward to the status callback registered at anariLoadLibrary() time.
+  if (!m_defaultStatusCB || !msg)
+    return;
+  m_defaultStatusCB(m_defaultStatusCBUserPtr, this_device(), source, sourceType,
+      severity, code, msg);
+}
 
 void PhotonDevice::discardFrame(ANARIFrame) {}
 

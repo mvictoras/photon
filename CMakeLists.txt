@@ -24,7 +24,11 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(CTest)
 
+# BUILD_TESTING is FORCEd OFF in the cache by Dependencies.cmake (to keep
+# tests disabled in the fetched Kokkos/ANARI projects), so explicitly enable
+# test generation for this project's own tree.
 set(BUILD_TESTING ON) # this project
+enable_testing()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
