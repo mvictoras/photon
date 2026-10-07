@@ -10,16 +10,23 @@
 namespace {
 
 int warning_count = 0;
+int failure_count = 0;
 
 void status_callback(const void *, ANARIDevice, ANARIObject, ANARIDataType,
     ANARIStatusSeverity severity, ANARIStatusCode, const char *msg)
 {
   if (severity >= ANARI_SEVERITY_WARNING) {
+    if (!msg) {
+      // The status message must be a non-null string (issue #9 criterion).
+      ++failure_count;
+      std::fprintf(stderr,
+          "ANARI status (severity %d) delivered a null message\n",
+          int(severity));
+      return;
+    }
     ++warning_count;
-    std::fprintf(stderr,
-        "ANARI status (severity %d): %s\n",
-        int(severity),
-        msg ? msg : "<null>");
+    std::fprintf(stderr, "ANARI status (severity %d): %s\n", int(severity),
+        msg);
   }
 }
 
@@ -60,8 +67,11 @@ int main()
   anariRelease(dev, (ANARIObject)dev);
   anariUnloadLibrary(lib);
 
-  std::printf("photon_anari_status_callback_test: %d status message(s) "
-              "delivered\n",
+  if (failure_count > 0)
+    return 1;
+
+  std::printf("photon_anari_status_callback_test: %d non-null status "
+              "message(s) delivered\n",
       warning_count);
   return 0;
 }
