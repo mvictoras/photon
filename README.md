@@ -141,6 +141,33 @@ Photon also works as an ANARI device for integration with ANARI-compatible appli
   --width 512 --height 512 --spp 64 --output render.ppm
 ```
 
+### Verifying the ANARI device (macOS, CPU build)
+
+Rebuild and check device conformance — extensions, object lifetimes, and
+status-callback delivery — without the full CTS Python setup (see issue #8):
+
+```bash
+./scripts/build.sh build-local          # CPU-only build with tests enabled
+
+cd build-local && ctest -R "photon_"    # full photon test suite
+
+# Or the ANARI conformance tests individually:
+./build-local/tests/photon_anari_import_test          # scene import via device objects
+./build-local/tests/photon_anari_extension_test       # library load + extension declarations
+./build-local/tests/photon_anari_refcount_test        # array-of-handles / parameter lifetimes
+./build-local/tests/photon_anari_status_callback_test # status callback delivery
+./build-local/app/photon_anari_smoke                  # loads the library, prints "loaded"
+./build-local/app/photon_anari_render                 # renders anari_out.ppm
+```
+
+The extension/refcount/status-callback tests exercise the public C API
+(`anariLoadLibrary`, `anariGetObjectInfo`, ...) — the same surface hosts such
+as ParaView use. The library location passed to `anariLoadLibrary` in the
+"photon,<dir>/" form must end with a path separator (the ANARI loader
+concatenates the location with the library file name). On CUDA builds the
+device pins Kokkos to the caller's current CUDA device, so creating a Photon
+device from a process that already owns a CUDA context is safe.
+
 ## Architecture
 
 ```

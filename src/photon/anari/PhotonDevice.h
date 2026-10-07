@@ -102,6 +102,12 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
     uint64_t array_num_items2{0};
     uint64_t array_num_items3{0};
 
+    // True when this device owns a reference to every handle stored in the
+    // array's buffer (contents given at creation via appMemory, or retained
+    // in unmapParameterArray). Arrays filled via mapArray alone do NOT own
+    // their contents and must not release them.
+    bool owns_element_handles{false};
+
     std::unordered_map<std::string, std::vector<std::byte>> params;
   };
 

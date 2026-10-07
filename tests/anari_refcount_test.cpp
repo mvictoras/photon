@@ -77,6 +77,23 @@ int main()
     dev.release((ANARIObject)s3);
     expect(dev.getObject(uintptr_t(s3)) == nullptr,
         "surface leaked after unsetAllParameters cleared handle parameters");
+
+    // --- 4. Array created empty and filled via mapArray does NOT own its
+    // contents: releasing the array must not release the contained handle
+    // (it was never retained by the device).
+    ANARISurface s4 = dev.newSurface();
+    ANARIArray1D arr2 =
+        dev.newArray1D(nullptr, nullptr, nullptr, ANARI_SURFACE, 1);
+    auto *mem = static_cast<uintptr_t *>(dev.mapArray(arr2));
+    mem[0] = uintptr_t(s4);
+    dev.unmapArray(arr2);
+
+    dev.release((ANARIObject)arr2);
+    expect(dev.getObject(uintptr_t(s4)) != nullptr,
+        "device released a handle it never owned (mapArray-filled array)");
+    dev.release((ANARIObject)s4);
+    expect(dev.getObject(uintptr_t(s4)) == nullptr,
+        "surface not freed after its last reference was released");
   }
   Kokkos::finalize();
 

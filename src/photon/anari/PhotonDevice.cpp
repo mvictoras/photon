@@ -162,10 +162,14 @@ PhotonDevice::PhotonDevice(ANARILibrary library)
   // letting Kokkos choose one on its own — an unpinned Kokkos::initialize()
   // is known to crash hosts with a pre-existing context on some drivers.
   int current_device = 0;
-  cudaGetDevice(&current_device);
-  Kokkos::InitializationSettings settings;
-  settings.set_device_id(current_device);
-  Kokkos::initialize(settings);
+  if (cudaGetDevice(&current_device) == cudaSuccess) {
+    Kokkos::InitializationSettings settings;
+    settings.set_device_id(current_device);
+    Kokkos::initialize(settings);
+  } else {
+    // No usable CUDA context yet — fall back to Kokkos's own selection.
+    Kokkos::initialize();
+  }
 #else
   Kokkos::initialize();
 #endif
@@ -230,7 +234,7 @@ ANARIArray1D PhotonDevice::newArray1D(
   o->array_num_items1 = n1;
 
   const size_t nb = bytes_for(type, n1);
-  auto *buf = new char[nb > 0 ? nb : 1];
+  auto *buf = new char[nb > 0 ? nb : 1]();
   if (appMemory && nb > 0)
     std::memcpy(buf, appMemory, nb);
   o->memory = buf;
@@ -243,6 +247,7 @@ ANARIArray1D PhotonDevice::newArray1D(
       if (handles[i] != 0)
         retain((ANARIObject)handles[i]);
     }
+    o->owns_element_handles = true;
   }
 
   return (ANARIArray1D)h;
@@ -258,7 +263,7 @@ ANARIArray2D PhotonDevice::newArray2D(
   o->array_num_items2 = n2;
 
   const size_t nb = bytes_for(type, n1, n2);
-  auto *buf = new char[nb > 0 ? nb : 1];
+  auto *buf = new char[nb > 0 ? nb : 1]();
   if (appMemory && nb > 0)
     std::memcpy(buf, appMemory, nb);
   o->memory = buf;
@@ -278,7 +283,7 @@ ANARIArray3D PhotonDevice::newArray3D(const void *appMemory, ANARIMemoryDeleter,
   o->array_num_items3 = n3;
 
   const size_t nb = bytes_for(type, n1, n2, n3);
-  auto *buf = new char[nb > 0 ? nb : 1];
+  auto *buf = new char[nb > 0 ? nb : 1]();
   if (appMemory && nb > 0)
     std::memcpy(buf, appMemory, nb);
   o->memory = buf;
@@ -892,10 +897,12 @@ void PhotonDevice::release(ANARIObject object)
   auto *o = it->second.get();
 
   // Arrays of handles own a reference to every non-null handle they contain
-  // (retained in newArray1D); release them before the buffer is freed. Only
-  // 1D arrays retain their contents, so only they release.
-  if (o->object_type == ANARI_ARRAY1D && is_handle_type(o->array_element_type)
-      && o->memory) {
+  // when the contents came in via appMemory (newArray1D) or were retained in
+  // unmapParameterArray — release them before the buffer is freed. Only 1D
+  // arrays can own element handles. Arrays filled via mapArray alone do NOT
+  // own their contents and must not release them.
+  if (o->owns_element_handles && o->object_type == ANARI_ARRAY1D
+      && is_handle_type(o->array_element_type) && o->memory) {
     const auto *handles = reinterpret_cast<const uintptr_t *>(o->memory);
     for (uint64_t i = 0; i < o->array_num_items1; ++i) {
       if (handles[i] != 0)
@@ -971,6 +978,7 @@ void PhotonDevice::unmapParameterArray(ANARIObject object, const char *name)
       if (handles[i] != 0)
         retain((ANARIObject)handles[i]);
     }
+    arr->owns_element_handles = true;
   }
 }
 
