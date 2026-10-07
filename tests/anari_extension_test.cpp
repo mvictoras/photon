@@ -51,6 +51,8 @@ int main()
       dev, ANARI_DEVICE, nullptr, "extension", ANARI_STRING_LIST));
   if (!exts) {
     std::fprintf(stderr, "FAIL: device extension list is null\n");
+    anariRelease(dev, (ANARIObject)dev);
+    anariUnloadLibrary(lib);
     return 1;
   }
 
@@ -59,6 +61,8 @@ int main()
     ++count;
   if (count == 0) {
     std::fprintf(stderr, "FAIL: device extension list is empty\n");
+    anariRelease(dev, (ANARIObject)dev);
+    anariUnloadLibrary(lib);
     return 1;
   }
 
@@ -97,11 +101,14 @@ int main()
   if (!lib_exts) {
     std::fprintf(stderr, "FAIL: library extension list is null\n");
     ++missing;
-  } else if (!contains_extension(lib_exts, "ANARI_KHR_GEOMETRY_TRIANGLE")
-      || !contains_extension(lib_exts, "ANARI_KHR_MATERIAL_MATTE")) {
-    std::fprintf(stderr,
-        "FAIL: library extension list missing required extensions\n");
-    ++missing;
+  } else {
+    for (const char *name : required) {
+      if (!contains_extension(lib_exts, name)) {
+        std::fprintf(stderr,
+            "FAIL: library extension list missing %s\n", name);
+        ++missing;
+      }
+    }
   }
 
   anariRelease(dev, (ANARIObject)dev);

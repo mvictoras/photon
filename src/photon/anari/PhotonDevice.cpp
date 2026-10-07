@@ -30,6 +30,30 @@ void owned_memory_deleter(const void *, const void *mem)
   delete[] static_cast<const char *>(mem);
 }
 
+char *copy_array_memory(const void *app_memory, size_t byte_count)
+{
+  auto *buffer = new char[byte_count > 0 ? byte_count : 1]();
+  if (app_memory && byte_count > 0)
+    std::memcpy(buffer, app_memory, byte_count);
+  return buffer;
+}
+
+void initialize_kokkos_for_anari()
+{
+#if defined(KOKKOS_ENABLE_CUDA)
+  int current_device = 0;
+  if (cudaGetDevice(&current_device) == cudaSuccess) {
+    Kokkos::InitializationSettings settings;
+    settings.set_device_id(current_device);
+    Kokkos::initialize(settings);
+  } else {
+    Kokkos::initialize();
+  }
+#else
+  Kokkos::initialize();
+#endif
+}
+
 size_t sizeof_anari(ANARIDataType type)
 {
   switch (type) {
@@ -155,24 +179,7 @@ PhotonDevice::PhotonDevice(ANARILibrary library)
 
   if (Kokkos::is_initialized())
     return;
-
-#if defined(KOKKOS_ENABLE_CUDA)
-  // A host application (e.g. a CUDA-enabled ParaView) may already own a CUDA
-  // context. Bind Kokkos to the caller's current CUDA device instead of
-  // letting Kokkos choose one on its own — an unpinned Kokkos::initialize()
-  // is known to crash hosts with a pre-existing context on some drivers.
-  int current_device = 0;
-  if (cudaGetDevice(&current_device) == cudaSuccess) {
-    Kokkos::InitializationSettings settings;
-    settings.set_device_id(current_device);
-    Kokkos::initialize(settings);
-  } else {
-    // No usable CUDA context yet — fall back to Kokkos's own selection.
-    Kokkos::initialize();
-  }
-#else
-  Kokkos::initialize();
-#endif
+  initialize_kokkos_for_anari();
 }
 
 uintptr_t PhotonDevice::alloc_handle(ANARIDataType t)
@@ -234,9 +241,7 @@ ANARIArray1D PhotonDevice::newArray1D(
   o->array_num_items1 = n1;
 
   const size_t nb = bytes_for(type, n1);
-  auto *buf = new char[nb > 0 ? nb : 1]();
-  if (appMemory && nb > 0)
-    std::memcpy(buf, appMemory, nb);
+  auto *buf = copy_array_memory(appMemory, nb);
   o->memory = buf;
   o->deleter = owned_memory_deleter;
   o->userdata = nullptr;
@@ -263,9 +268,7 @@ ANARIArray2D PhotonDevice::newArray2D(
   o->array_num_items2 = n2;
 
   const size_t nb = bytes_for(type, n1, n2);
-  auto *buf = new char[nb > 0 ? nb : 1]();
-  if (appMemory && nb > 0)
-    std::memcpy(buf, appMemory, nb);
+  auto *buf = copy_array_memory(appMemory, nb);
   o->memory = buf;
   o->deleter = owned_memory_deleter;
   o->userdata = nullptr;
@@ -283,9 +286,7 @@ ANARIArray3D PhotonDevice::newArray3D(const void *appMemory, ANARIMemoryDeleter,
   o->array_num_items3 = n3;
 
   const size_t nb = bytes_for(type, n1, n2, n3);
-  auto *buf = new char[nb > 0 ? nb : 1]();
-  if (appMemory && nb > 0)
-    std::memcpy(buf, appMemory, nb);
+  auto *buf = copy_array_memory(appMemory, nb);
   o->memory = buf;
   o->deleter = owned_memory_deleter;
   o->userdata = nullptr;
@@ -769,6 +770,18 @@ void PhotonDevice::setParameter(ANARIObject object, const char *name, ANARIDataT
   if (!o || !name || !mem)
     return;
 
+  auto prev = o->params.find(name);
+  auto prev_type = o->param_types.find(name);
+  auto release_previous_parameter = [&]() {
+    if (prev != o->params.end() && prev_type != o->param_types.end()
+        && is_handle_type(prev_type->second)) {
+      uintptr_t old_h = 0;
+      std::memcpy(&old_h, prev->second.data(), sizeof(uintptr_t));
+      if (old_h != 0)
+        release((ANARIObject)old_h);
+    }
+  };
+
   if (type == ANARI_ARRAY1D || type == ANARI_ARRAY2D || type == ANARI_ARRAY3D || type == ANARI_GEOMETRY
       || type == ANARI_SURFACE || type == ANARI_WORLD || type == ANARI_FRAME || type == ANARI_RENDERER
       || type == ANARI_CAMERA || type == ANARI_LIGHT || type == ANARI_MATERIAL
@@ -780,17 +793,12 @@ void PhotonDevice::setParameter(ANARIObject object, const char *name, ANARIDataT
     if (h != 0)
       retain((ANARIObject)h);
 
-    auto prev = o->params.find(name);
-    if (prev != o->params.end() && prev->second.size() == sizeof(uintptr_t)) {
-      uintptr_t old_h = 0;
-      std::memcpy(&old_h, prev->second.data(), sizeof(uintptr_t));
-      if (old_h != 0)
-        release((ANARIObject)old_h);
-    }
+    release_previous_parameter();
 
     std::vector<std::byte> bytes(sizeof(uintptr_t));
     std::memcpy(bytes.data(), &h, sizeof(uintptr_t));
     o->params[name] = std::move(bytes);
+    o->param_types[name] = type;
     return;
   }
 
@@ -802,23 +810,28 @@ void PhotonDevice::setParameter(ANARIObject object, const char *name, ANARIDataT
     const size_t n = std::strlen(s) + 1;
     std::vector<std::byte> bytes(n);
     std::memcpy(bytes.data(), s, n);
+    release_previous_parameter();
     o->params[name] = std::move(bytes);
+    o->param_types[name] = type;
     return;
   }
 
   const size_t n = sizeof_anari(type);
   std::vector<std::byte> bytes(n);
   std::memcpy(bytes.data(), mem, n);
+  release_previous_parameter();
   o->params[name] = std::move(bytes);
+  o->param_types[name] = type;
 }
 
 namespace {
 
 // If the stored parameter bytes hold a valid object handle, release it.
 // (Mirrors the retain in setParameter when a handle parameter is replaced.)
-void release_stored_handle(PhotonDevice &dev, const std::vector<std::byte> &bytes)
+void release_stored_handle(PhotonDevice &dev, ANARIDataType type,
+    const std::vector<std::byte> &bytes)
 {
-  if (bytes.size() != sizeof(uintptr_t))
+  if (!is_handle_type(type) || bytes.size() != sizeof(uintptr_t))
     return;
   uintptr_t h = 0;
   std::memcpy(&h, bytes.data(), sizeof(uintptr_t));
@@ -838,9 +851,12 @@ void PhotonDevice::unsetParameter(ANARIObject object, const char *name)
   if (it == o->params.end())
     return;
 
-  release_stored_handle(*this, it->second);
+  auto type_it = o->param_types.find(name);
+  if (type_it != o->param_types.end())
+    release_stored_handle(*this, type_it->second, it->second);
 
   o->params.erase(it);
+  o->param_types.erase(name);
 }
 
 void PhotonDevice::unsetAllParameters(ANARIObject object)
@@ -849,10 +865,14 @@ void PhotonDevice::unsetAllParameters(ANARIObject object)
   if (!o)
     return;
 
-  for (const auto &entry : o->params)
-    release_stored_handle(*this, entry.second);
+  for (const auto &entry : o->params) {
+    auto type_it = o->param_types.find(entry.first);
+    if (type_it != o->param_types.end())
+      release_stored_handle(*this, type_it->second, entry.second);
+  }
 
   o->params.clear();
+  o->param_types.clear();
 }
 
 void PhotonDevice::commitParameters(ANARIObject object)

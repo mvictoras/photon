@@ -109,6 +109,7 @@ struct PhotonDevice final : public anari::DeviceImpl, public helium::RefCounted
     bool owns_element_handles{false};
 
     std::unordered_map<std::string, std::vector<std::byte>> params;
+    std::unordered_map<std::string, ANARIDataType> param_types;
   };
 
   Object *getObject(uintptr_t handle) const { return const_cast<PhotonDevice *>(this)->get((ANARIObject)handle); }

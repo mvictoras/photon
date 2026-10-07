@@ -147,17 +147,17 @@ Rebuild and check device conformance — extensions, object lifetimes, and
 status-callback delivery — without the full CTS Python setup (see issue #8):
 
 ```bash
-./scripts/build.sh build-local          # CPU-only build with tests enabled
+OPENCODE_ENABLE_CUDA=OFF ./scripts/build.sh build-local
 
 cd build-local && ctest -R "photon_"    # full photon test suite
 
 # Or the ANARI conformance tests individually:
-./build-local/tests/photon_anari_import_test          # scene import via device objects
-./build-local/tests/photon_anari_extension_test       # library load + extension declarations
-./build-local/tests/photon_anari_refcount_test        # array-of-handles / parameter lifetimes
-./build-local/tests/photon_anari_status_callback_test # status callback delivery
-./build-local/app/photon_anari_smoke                  # loads the library, prints "loaded"
-./build-local/app/photon_anari_render                 # renders anari_out.ppm
+./tests/photon_anari_import_test          # scene import via device objects
+./tests/photon_anari_extension_test       # library load + extension declarations
+./tests/photon_anari_refcount_test        # array-of-handles / parameter lifetimes
+./tests/photon_anari_status_callback_test # status callback delivery
+./app/photon_anari_smoke                  # loads the library, prints "loaded"
+./app/photon_anari_render                 # renders anari_out.ppm
 ```
 
 The extension/refcount/status-callback tests exercise the public C API

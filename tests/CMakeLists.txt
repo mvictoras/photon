@@ -55,6 +55,7 @@ target_link_libraries(photon_upload_test PRIVATE anari_library_photon)
 
 target_include_directories(photon_anari_import_test PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
 target_include_directories(photon_anari_extension_test PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
+target_include_directories(photon_anari_refcount_test PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
 target_include_directories(photon_anari_status_callback_test PRIVATE "${CMAKE_BINARY_DIR}/_deps/anari-src/src/anari/include")
 
 # Where the libanari_library_photon shared library lives, so tests can load it
@@ -63,6 +64,8 @@ target_include_directories(photon_anari_status_callback_test PRIVATE "${CMAKE_BI
 # trailing slash is required.
 set(PHOTON_ANARI_LIB_DIR "${CMAKE_BINARY_DIR}/src/")
 target_compile_definitions(photon_anari_extension_test
+    PRIVATE PHOTON_ANARI_LIB_DIR="${PHOTON_ANARI_LIB_DIR}")
+target_compile_definitions(photon_anari_refcount_test
     PRIVATE PHOTON_ANARI_LIB_DIR="${PHOTON_ANARI_LIB_DIR}")
 target_compile_definitions(photon_anari_status_callback_test
     PRIVATE PHOTON_ANARI_LIB_DIR="${PHOTON_ANARI_LIB_DIR}")
