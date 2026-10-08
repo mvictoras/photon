@@ -3,6 +3,7 @@
 #include <anari/backend/LibraryImpl.h>
 
 #include <cstring>
+#include <exception>
 #include <string_view>
 
 #include "photon/anari/device.h"
@@ -32,7 +33,15 @@ struct Library : public anari::LibraryImpl
   ANARIDevice newDevice(const char *subtype) override
   {
     if (!subtype || std::string_view(subtype).empty() || std::strcmp(subtype, "default") == 0) {
-      return photon::anari_device::new_device(this_library());
+      try {
+        return photon::anari_device::new_device(this_library());
+      } catch (const std::exception &error) {
+        if (defaultStatusCB()) {
+          defaultStatusCB()(defaultStatusCBUserPtr(), nullptr, nullptr,
+              ANARI_DEVICE, ANARI_SEVERITY_ERROR,
+              ANARI_STATUS_INVALID_OPERATION, error.what());
+        }
+      }
     }
 
     return nullptr;

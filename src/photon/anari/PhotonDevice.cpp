@@ -4,6 +4,9 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <string>
 
 #include "photon/anari/PhotonDevice.h"
 
@@ -156,27 +159,29 @@ size_t bytes_for(ANARIDataType type, uint64_t n1, uint64_t n2 = 1, uint64_t n3 =
 // attaches to the host's device instead of fighting it. On CPU-only builds
 // the plain no-argument initialization is adequate and unchanged.
 //
-// Kokkos is still initialized at most once per process: the is_initialized()
-// guard is process-global, so repeated PhotonDevice construction is safe.
 void initialize_kokkos_for_host_process()
 {
+  static std::mutex initialization_mutex;
+  const std::lock_guard lock(initialization_mutex);
+
   if (Kokkos::is_initialized())
     return;
 
 #ifdef KOKKOS_ENABLE_CUDA
   int current_device = 0;
-  if (cudaGetDevice(&current_device) == cudaSuccess) {
-    Kokkos::InitializationSettings settings;
-    settings.set_device_id(current_device);
-    Kokkos::initialize(settings);
-    return;
+  const cudaError_t result = cudaGetDevice(&current_device);
+  if (result != cudaSuccess) {
+    const char *message = cudaGetErrorString(result);
+    throw std::runtime_error("Photon could not query the host CUDA device: "
+        + std::string(message ? message : "unknown CUDA error"));
   }
-  // No usable current device reported (e.g. no CUDA driver or no devices).
-  // That also means the process owns no CUDA context to collide with, so
-  // letting Kokkos proceed cannot re-create the crash scenario; with no GPU
-  // present Kokkos aborts with its own diagnostic.
-#endif
+
+  Kokkos::InitializationSettings settings;
+  settings.set_device_id(current_device);
+  Kokkos::initialize(settings);
+#else
   Kokkos::initialize();
+#endif
 }
 
 }

@@ -1,5 +1,19 @@
 if(OPENCODE_ENABLE_CUDA AND Kokkos_ENABLE_CUDA)
-  message(STATUS "Skipping tests/ targets (not compatible with Kokkos CUDA CXX propagation)")
+  find_package(CUDAToolkit REQUIRED)
+
+  add_executable(photon_anari_kokkos_cuda_init_test
+    anari_kokkos_cuda_init_test.cpp)
+  target_link_libraries(photon_anari_kokkos_cuda_init_test
+    PRIVATE anari CUDA::cudart)
+  target_compile_definitions(photon_anari_kokkos_cuda_init_test
+    PRIVATE PHOTON_ANARI_LIB_DIR="${CMAKE_BINARY_DIR}/src/")
+  add_dependencies(photon_anari_kokkos_cuda_init_test anari_library_photon)
+  add_test(NAME photon_anari_kokkos_cuda_init_test
+    COMMAND $<TARGET_FILE:photon_anari_kokkos_cuda_init_test>)
+  set_tests_properties(photon_anari_kokkos_cuda_init_test
+    PROPERTIES SKIP_RETURN_CODE 77)
+
+  message(STATUS "Skipping Kokkos-linked tests/ targets (not compatible with Kokkos CUDA CXX propagation)")
   return()
 endif()
 

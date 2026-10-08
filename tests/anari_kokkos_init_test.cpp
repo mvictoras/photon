@@ -18,13 +18,17 @@
 
 #include <Kokkos_Core.hpp>
 
+#include <atomic>
+#include <barrier>
 #include <cstdio>
+#include <thread>
+#include <vector>
 
 namespace {
 
 using photon::anari_device::PhotonDevice;
 
-int failures = 0;
+std::atomic<int> failures{0};
 
 void expect(bool condition, const char *message)
 {
@@ -48,8 +52,24 @@ void kokkos_works()
 
 int main()
 {
-  // NOTE: the host process deliberately does NOT call Kokkos::initialize()
-  // here — the first PhotonDevice must do it.
+  // The host process deliberately does not call Kokkos::initialize(). Start
+  // several first-time constructors together to exercise the process-wide
+  // check-and-initialize boundary under contention.
+  constexpr int thread_count = 16;
+  std::barrier start_line(thread_count);
+  std::vector<std::thread> threads;
+  threads.reserve(thread_count);
+
+  for (int i = 0; i < thread_count; ++i) {
+    threads.emplace_back([&start_line]() {
+      start_line.arrive_and_wait();
+      PhotonDevice device(nullptr);
+      kokkos_works();
+    });
+  }
+
+  for (auto &thread : threads)
+    thread.join();
 
   {
     PhotonDevice first(nullptr);
@@ -78,7 +98,7 @@ int main()
 
   Kokkos::finalize();
 
-  if (failures > 0)
+  if (failures.load() > 0)
     return 1;
 
   std::printf("photon_anari_kokkos_init_test: all init checks passed\n");
