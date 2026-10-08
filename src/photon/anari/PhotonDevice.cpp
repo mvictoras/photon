@@ -9,6 +9,10 @@
 
 #include <Kokkos_Core.hpp>
 
+#ifdef KOKKOS_ENABLE_CUDA
+#include <cuda_runtime.h>
+#endif
+
 #include "photon/pt/pathtracer.h"
 // denoiser.h included via PhotonDevice.h
 #include "photon/pt/backend/ray_backend.h"
@@ -143,6 +147,38 @@ size_t bytes_for(ANARIDataType type, uint64_t n1, uint64_t n2 = 1, uint64_t n3 =
   return sizeof_anari(type) * size_t(n1) * size_t(n2) * size_t(n3);
 }
 
+// Issue #11: on CUDA builds, an uncoordinated Kokkos::initialize() can crash
+// the host process (e.g. CUDA-enabled ParaView) that already owns a CUDA
+// context. With no settings, Kokkos blindly targets the first visible device
+// and its cudaSetDevice/cudaDeviceSynchronize collide with the host's own
+// context. Instead, ask the CUDA runtime which device this thread already
+// selected (cudaGetDevice) and hand that to Kokkos explicitly; Kokkos then
+// attaches to the host's device instead of fighting it. On CPU-only builds
+// the plain no-argument initialization is adequate and unchanged.
+//
+// Kokkos is still initialized at most once per process: the is_initialized()
+// guard is process-global, so repeated PhotonDevice construction is safe.
+void initialize_kokkos_for_host_process()
+{
+  if (Kokkos::is_initialized())
+    return;
+
+#ifdef KOKKOS_ENABLE_CUDA
+  int current_device = 0;
+  if (cudaGetDevice(&current_device) == cudaSuccess) {
+    Kokkos::InitializationSettings settings;
+    settings.set_device_id(current_device);
+    Kokkos::initialize(settings);
+    return;
+  }
+  // No usable current device reported (e.g. no CUDA driver or no devices).
+  // That also means the process owns no CUDA context to collide with, so
+  // letting Kokkos proceed cannot re-create the crash scenario; with no GPU
+  // present Kokkos aborts with its own diagnostic.
+#endif
+  Kokkos::initialize();
+}
+
 }
 
 PhotonDevice::PhotonDevice(ANARILibrary library)
@@ -157,8 +193,7 @@ PhotonDevice::PhotonDevice(ANARILibrary library)
     m_defaultStatusCBUserPtr = lib->defaultStatusCBUserPtr();
   }
 
-  if (!Kokkos::is_initialized())
-    Kokkos::initialize();
+  initialize_kokkos_for_host_process();
 }
 
 uintptr_t PhotonDevice::alloc_handle(ANARIDataType t)
