@@ -239,6 +239,7 @@ ImportedMaterial import_material(const PhotonDevice &dev, const PhotonDevice::Ob
       if (colorStr && std::strcmp(colorStr, "color") == 0)
         out.use_vertex_color = true;
     }
+    read_param(mo, "opacity", out.mat.alpha);
     return out;
   }
 

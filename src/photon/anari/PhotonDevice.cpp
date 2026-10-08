@@ -391,18 +391,18 @@ const void *PhotonDevice::getObjectInfo(
       && infoType == ANARI_STRING_LIST) {
     // KHR extensions whose implementations are complete — keep in sync with
     // getObjectSubtypes() and SceneFromAnari.cpp. Do not advertise a feature
-    // here unless it is fully implemented.
+    // here unless it is fully implemented. Physically-based material and
+    // image2D sampler support remain intentionally unadvertised until their
+    // full parameter sets are translated.
     static const char *extensions[] = {
         "ANARI_KHR_GEOMETRY_TRIANGLE",
         "ANARI_KHR_GEOMETRY_SPHERE",
         "ANARI_KHR_GEOMETRY_CYLINDER",
         "ANARI_KHR_CAMERA_PERSPECTIVE",
         "ANARI_KHR_MATERIAL_MATTE",
-        "ANARI_KHR_MATERIAL_PHYSICALLY_BASED",
         "ANARI_KHR_LIGHT_DIRECTIONAL",
         "ANARI_KHR_LIGHT_POINT",
         "ANARI_KHR_LIGHT_QUAD",
-        "ANARI_KHR_SAMPLER_IMAGE2D",
         "ANARI_KHR_RENDERER_BACKGROUND_COLOR",
         "ANARI_KHR_RENDERER_AMBIENT_LIGHT",
         "ANARI_KHR_FRAME_CHANNEL_DEPTH",
